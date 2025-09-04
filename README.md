@@ -1,19 +1,16 @@
-# Protoyp Status 
-Dieses Projekt verwende ich mit einem AQMOS R2D2 32 Wasserenthärter.
-Das ganze Gerät steht auf einer speziellen 3D Gedruckten Waage. Dies ist über ein gewöhnliches Netzwerkkabel  mit einer Controlbox verbunden. Darin sitzt ein ESP 32.
-Momentan werden alle Daten an einen MQTT Server (in IOBROKER) übertragen. Momentan ist das ganze ein Messprototyp. Ziel ist es das zu einem autarken System auszubauen, 
-welches an das Handy bzw. an IOBROKER meldet, wenn Regeneriersalz nachgefüllt werden muss 
-  
-I am using this project with an AQMOS R2D2 32 water softener.
-The whole device stands on a special 3D printed scale. This is connected to a control box via an ordinary network cable. Inside is an ESP 32.
-All data is currently transmitted to an MQTT server (in IOBROKER). At the moment the whole thing is a measurement prototype. The aim is to develop it into a self-sufficient system,
-which reports to the mobile phone or IOBROKER when regeneration salt needs to be topped up
+Ich habe mir kürzlich eine Weller WE1010 Lötstation zugelegt. Die erste Station habe ich direkt zurückgeschickt, da ich einen Fehler vermutete: Während des Lötens wechselte sie plötzlich in den Standby-Modus.
 
-# Salt Monitor for Water Softener
+Doch auch das Austauschgerät zeigte dasselbe Verhalten – und ich musste feststellen, dass es sich nicht um einen Fehler, sondern um ein vorgesehenes Feature handelt: Die Lötstation geht nach einer fest definierten Zeit gnadenlos in den Standby, unabhängig davon, ob sie gerade in Gebrauch gerade ist. Das macht den an sich sinnvollen Standby Modus in meinen Augen unbrauchbar.
+Meine Lösung:
+Der Lötkolbenhalter steht auf einer schmucken, 3D-gedruckten Waage. Diese erkennt, ob der Lötkolben gerade verwendet wird (also nicht in der Halterung steckt). Sobald das der Fall ist, verhindert sie den Standby-Modus, indem sie die Lötstation für 100 Millisekunden kurz ausschaltet und sofort wieder einschaltet. Dadurch startet der interne Standby-Timer neu – und die Station bleibt aktiv.
 
-This project is an Arduino-based firmware for an ESP32 to monitor the salt level in a water softener by continuously weighing it. It provides a web interface for configuration, an OLED display for live status, and integrates with home automation systems via MQTT.
+English:
+I recently bought a Weller WE1010 soldering station. I sent the first station straight back as I suspected a fault: during soldering, it suddenly switched to standby mode.
 
-The original code comments and on-screen display text are in German.
+However, the replacement unit also exhibited the same behaviour - and I discovered that this was not a fault, but an intended feature: The soldering station mercilessly goes into standby after a predefined time, regardless of whether it is currently in use. In my opinion, this makes the standby mode, which is actually useful, unusable.
+My solution:
+The soldering iron holder stands on a smart, 3D-printed scale. This recognises whether the soldering iron is currently in use (i.e. not in the holder). As soon as this is the case, it prevents standby mode by switching the soldering station off briefly for 100 milliseconds and switching it on again immediately. This restarts the internal standby timer - and the station remains active.
+
 
 ## Features
 
@@ -24,6 +21,7 @@ The original code comments and on-screen display text are in German.
 - **On-Device Controls:** A single button is used to navigate a simple menu for taring the scale, starting the calibration process, and viewing device information.
 - **Persistent Storage:** All configuration is saved to the ESP32's non-volatile storage and is retained after a reboot or power loss.
 - **mDNS Discovery:** The device can be discovered on the local network via its mDNS hostname (e.g., `myESP.local`).
+- ** Power Control of the WELLER 1010 station
 
 ## Hardware Requirements
 
@@ -33,7 +31,10 @@ The original code comments and on-screen display text are in German.
 - SSD1306 I2C OLED Display (128x64 pixels)
 - Tactile Push Button
 - 5V Power Supply
-- (Optional) An LED for status indication.
+- 5 Volt Relais
+- A LED for status indication.
+- 3D Prints from Printables.com
+- Various small electrical parts (sockets, cable, etc...)
 
 ### Default Pinout
 
@@ -60,53 +61,7 @@ This project is built using the Arduino framework for the ESP32. You will need t
 - `ESPAsyncWebServer`
 - `AsyncTCP`
 - `PubSubClient` by Nick O'Leary
+- `Bounce2.h`
 
 ## Initial Setup & Configuration
 
-On the first boot, or after a factory reset, the device cannot connect to a WiFi network and will enter AP (Access Point) mode.
-
-1.  The device will create a new WiFi network with a name like **`myESP-Setup-XXXX`**.
-2.  Connect your computer or smartphone to this WiFi network.
-3.  Open a web browser and navigate to **`http://192.168.4.1`**.
-4.  The web configuration portal will load. Here you can set:
-    - **WLAN Settings:** Your home WiFi network's SSID and password.
-    - **mDNS Hostname:** A local network name for the device (e.g., `salz-monitor`).
-    - **MQTT Settings:** The IP address, port, and credentials for your MQTT broker (optional).
-    - **Application Parameters:**
-        - `Kalibrierungsgewicht (kg)`: The known weight (in kilograms) you will use for calibration.
-        - `Akkustischer Alarm`: (Not implemented in this version)
-        - `Initialer Salz-Füllstand`: (Not implemented in this version)
-5.  Click **"Daten übernehmen"** (Apply Data) to save the configuration. The device will reboot and attempt to connect to your configured WiFi network.
-
-## Operation
-
-Once configured, the device will display the current weight on the OLED screen. The single button allows you to perform several actions based on the duration of the press.
-
-- **Short Press (< 0.5s):** Enters the menu and cycles through the pages: `LIVE` -> `TARE` -> `CALIBRATION` -> `INFO` -> `RESET`.
-- **Medium Press (2-5s):** When the `TARE` page is active, this will tare the scale (set the current weight to zero). This is useful after placing the empty salt container on the scale.
-- **Long Press (5-10s):** When the `CALIBRATION` page is active, this will start the interactive calibration process.
-- **Very Long Press (> 10s):** Triggers a factory reset. All saved configuration will be erased, and the device will restart in AP mode.
-
-### Calibration Process
-
-To get accurate readings, you must calibrate the scale.
-
-1.  Enter the known weight you will use for calibration in the web interface (e.g., `5.0` for a 5kg weight).
-2.  Navigate to the `CALIBRATION` page using short presses of the button.
-3.  Press and hold the button for 5-10 seconds to begin.
-4.  Follow the on-screen prompts:
-    1.  `Alles runternehmen` (Remove everything from the scale). Press the button.
-    2.  `Lege Kalibriergewicht auf` (Place the calibration weight on the scale). Press the button.
-5.  The scale is now calibrated. The new calibration factor is saved automatically.
-
-## MQTT Integration
-
-The device publishes data to the MQTT broker, allowing integration with home automation systems. The base topic is derived from the **mDNS Hostname** you set during configuration.
-
-- **Weight Topic:** `<base_topic>/gewicht_kg`
-  - **Payload:** The current weight in kilograms, as a floating-point number (e.g., `12.7`).
-  - This message is **retained**.
-
-- **Calibration Status Topic:** `<base_topic>/calibrated`
-  - **Payload:** `1` if the scale has been calibrated, `0` otherwise.
-  - This message is **retained**.
