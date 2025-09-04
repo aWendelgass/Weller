@@ -1,4 +1,3 @@
-
 #include "Waage.h"
 #include <math.h>
 
@@ -7,7 +6,7 @@ static const int   UPDATE_INTERVAL_MS       = 500;
 static const float OUTPUT_TOLERANCE_PERCENT = 5.0f;
 static const float EMA_ALPHA                = 0.3f; // Glättung (0..1)
 
-Waage::Waage(int doutPin, int sckPin, int tastenPin, int ledPin)
+Waage::Waage(int doutPin, int sckPin)
 : _loadCell(doutPin, sckPin),
   _lastWeight(0.0f),
   _emaWeight(0.0f),
@@ -15,8 +14,6 @@ Waage::Waage(int doutPin, int sckPin, int tastenPin, int ledPin)
   _lastPrintedKg(0.0f),
   _hasLastPrinted(false),
   _hasLastOutput(false),
-  _tastenPin(tastenPin),
-  _ledPin(ledPin),
   _anzeigeGenauigkeit_g(1000),          // Default: 1000 g (2 Nachkommastelle in kg)
   _anzeigeDezimalstellen(1),
   _uiCb(nullptr)
@@ -24,9 +21,6 @@ Waage::Waage(int doutPin, int sckPin, int tastenPin, int ledPin)
 
 void Waage::begin(const KalibrierungsDaten& daten) {
   _daten = daten;
-
-  pinMode(_ledPin, OUTPUT);
-  digitalWrite(_ledPin, LOW);
 
   _loadCell.begin();
   _loadCell.setSamplesInUse(16);
@@ -113,104 +107,62 @@ void Waage::loop() {
   }
 }
 
+CalibrationState Waage::kalibriereWaage(CalibrationState currentState, float kalibrierungsgewicht) {
+    switch (currentState) {
+        case CalibrationState::IDLE:
+            if (_uiCb) _uiCb("Alles runternehmen", "Taste drücken …");
+            Serial.println(F("Nimm alles von der Waage. Drücke den Taster, um fortzufahren."));
+            return CalibrationState::WAITING_FOR_TARE;
 
-KalibrierungsDaten Waage::kalibriereWaage(float kalibrierungsgewicht) {
-  KalibrierungsDaten neueDaten{};
+        case CalibrationState::WAITING_FOR_TARE:
+            // This state is just for waiting for user input, which is handled in the main loop
+            return CalibrationState::WAITING_FOR_TARE;
 
-  if (_uiCb) _uiCb("Alles runternehmen", "Taste drücken …");
-  Serial.println(F("Nimm alles von der Waage. Drücke den Taster, um fortzufahren."));
-  _warteAufTasterDruck();
+        case CalibrationState::TARE_DONE:
+            _loadCell.tare();
+            if (_uiCb) _uiCb("Tare abgeschlossen", "Kal.-Gew. auflegen");
+            Serial.println(F("Tare abgeschlossen."));
+            return CalibrationState::WAITING_FOR_WEIGHT;
 
-  _loadCell.tare();
-  _blinkLED(3, 100);
-  if (_uiCb) _uiCb("Tare abgeschlossen", "Taste drücken …");
-  Serial.println(F("Tare abgeschlossen."));
+        case CalibrationState::WAITING_FOR_WEIGHT:
+            {
+                long g = lroundf(kalibrierungsgewicht);
+                char line2[32];
+                snprintf(line2, sizeof(line2), "Gewicht %ld g", g);
+                if (_uiCb) _uiCb("Lege Kalibriergewicht", line2);
+                Serial.print(F("Lege nun das Kalibrierungsgewicht ("));
+                Serial.print(g);
+                Serial.println(F(" g) auf. Drücke den Taster, um fortzufahren."));
+            }
+            return CalibrationState::WAITING_FOR_WEIGHT;
 
-  // --- Anzeige/Log ohne Nachkommastellen (kaufmännisch gerundet) ---
-  long g = lroundf(kalibrierungsgewicht);          // 1999.6 -> 2000
+        case CalibrationState::WEIGHT_DONE:
+            _loadCell.refreshDataSet();
+            _daten.kalibrierungsfaktor = _loadCell.getNewCalibration(kalibrierungsgewicht);
+            _daten.tareOffset          = _loadCell.getTareOffset();
+            _daten.istKalibriert       = true;
 
-  char line2[32];
-  snprintf(line2, sizeof(line2), "Gewicht %ld g", g);
-  if (_uiCb) _uiCb("Lege Kalibriergewicht", line2);
+            _loadCell.setCalFactor(_daten.kalibrierungsfaktor);
+            _loadCell.setTareOffset(_daten.tareOffset);
 
-  Serial.print(F("Lege nun das Kalibrierungsgewicht ("));
-  Serial.print(g);                                  // keine Dezimalstellen
-  Serial.println(F(" g) auf. Drücke den Taster, um fortzufahren."));
-  // ---------------------------------------------------------------
+            _hasLastOutput  = false;
+            _hasLastPrinted = false;
+            _lastWeight     = 0.0f;
+            _emaInit        = false;
 
-  _warteAufTasterDruck();
+            if (_uiCb) _uiCb("Kalibrierung fertig", "");
+            Serial.print(F("Kalibrierung abgeschlossen. Faktor: "));
+            Serial.println(_daten.kalibrierungsfaktor, 5);
+            Serial.print(F("Tare Offset: "));
+            Serial.println(_daten.tareOffset);
+            return CalibrationState::FINISHED;
 
-  _loadCell.refreshDataSet();
-  // Für die eigentliche Kalibrierung weiterhin den Float verwenden
-  neueDaten.kalibrierungsfaktor = _loadCell.getNewCalibration(kalibrierungsgewicht);
-  neueDaten.tareOffset          = _loadCell.getTareOffset();
-  neueDaten.istKalibriert       = true;
-
-  // interne Daten aktualisieren
-  _loadCell.setCalFactor(neueDaten.kalibrierungsfaktor);
-  _loadCell.setTareOffset(neueDaten.tareOffset);
-  _daten = neueDaten;
-
-  // Ausgabe-Tracking zurücksetzen
-  _hasLastOutput  = false;
-  _hasLastPrinted = false;
-  _lastWeight     = 0.0f;
-  _emaInit        = false;
-
-  if (_uiCb) _uiCb("Kalibrierung fertig", "");
-  Serial.print(F("Kalibrierung abgeschlossen. Faktor: "));
-  Serial.println(neueDaten.kalibrierungsfaktor, 5);
-  Serial.print(F("Tare Offset: "));
-  Serial.println(neueDaten.tareOffset);
-
-  return neueDaten;
+        case CalibrationState::FINISHED:
+            return CalibrationState::FINISHED;
+    }
+    return CalibrationState::IDLE;
 }
 
-
-/* Methode vom Entkalker KalibrierungsDaten Waage::kalibriereWaage(float kalibrierungsgewicht) {
-  KalibrierungsDaten neueDaten{};
-
-  if (_uiCb) _uiCb("Alles runternehmen", "Taste drücken …");
-  Serial.println(F("Nimm alles von der Waage. Drücke den Taster, um fortzufahren."));
-  _warteAufTasterDruck();
-
-  _loadCell.tare();
-  _blinkLED(3, 100);
-  if (_uiCb) _uiCb("Tare abgeschlossen", "Taste drücken …");
-  Serial.println(F("Tare abgeschlossen."));
-
-  char line2[32];
-  snprintf(line2, sizeof(line2), "Gewicht %.2f g", kalibrierungsgewicht);
-  if (_uiCb) _uiCb("Lege Kalibriergewicht", line2);
-  Serial.print(F("Lege nun das Kalibrierungsgewicht ("));
-  Serial.print(kalibrierungsgewicht, 2);
-  Serial.println(F(" g) auf. Drücke den Taster, um fortzufahren."));
-  _warteAufTasterDruck();
-
-  _loadCell.refreshDataSet();
-  neueDaten.kalibrierungsfaktor = _loadCell.getNewCalibration(kalibrierungsgewicht);
-  neueDaten.tareOffset          = _loadCell.getTareOffset();
-  neueDaten.istKalibriert       = true;
-
-  // interne Daten aktualisieren
-  _loadCell.setCalFactor(neueDaten.kalibrierungsfaktor);
-  _loadCell.setTareOffset(neueDaten.tareOffset);
-  _daten = neueDaten;
-
-  // Ausgabe-Tracking zurücksetzen
-  _hasLastOutput  = false;
-  _hasLastPrinted = false;
-  _lastWeight     = 0.0f;
-  _emaInit        = false;
-
-  if (_uiCb) _uiCb("Kalibrierung fertig", "");
-  Serial.print(F("Kalibrierung abgeschlossen. Faktor: "));
-  Serial.println(neueDaten.kalibrierungsfaktor, 5);
-  Serial.print(F("Tare Offset: "));
-  Serial.println(neueDaten.tareOffset);
-
-  return neueDaten;
-}*/
 
 void Waage::setAnzeigeGenauigkeitGramm(uint16_t genauigkeit_g) {
   if (genauigkeit_g == 0) genauigkeit_g = 1; // Schutz
@@ -238,21 +190,7 @@ float Waage::getGewichtKg() { return getGewicht() / 1000.0f; }
 float Waage::getKalibrierungsfaktor() { return _daten.kalibrierungsfaktor; }
 long  Waage::getTareOffset() { return _loadCell.getTareOffset(); }
 bool  Waage::istKalibriert() { return _daten.istKalibriert; }
-
-void Waage::_warteAufTasterDruck() {
-  // Taster: INPUT_PULLUP -> gedrückt = LOW
-  while (digitalRead(_tastenPin) == HIGH) { delay(10); } // warten bis gedrückt
-  while (digitalRead(_tastenPin) == LOW)  { delay(10); } // warten bis losgelassen
-}
-
-void Waage::_blinkLED(int count, int delayMs) {
-  for (int i = 0; i < count; ++i) {
-    digitalWrite(_ledPin, HIGH);
-    delay(delayMs);
-    digitalWrite(_ledPin, LOW);
-    delay(delayMs);
-  }
-}
+KalibrierungsDaten Waage::getKalibrierungsdaten() { return _daten; }
 
 uint8_t Waage::_berechneDezimalstellen(uint16_t genauigkeit_g) {
   // Gramm-Genauigkeit -> Nachkommastellen in kg
