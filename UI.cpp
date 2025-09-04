@@ -68,6 +68,18 @@ void UI::showMessage(const char* line1, const char* line2, int delayMs) {
     }
 }
 
+void UI::showMessage(const char* line1, const char* line2, const char* line3, int delayMs) {
+    if(!_oledAvailable) return;
+    _display.clearDisplay();
+    _u8g2.setFont(u8g2_font_6x13_tf);  _u8g2.setCursor(0,12); if(line1) _u8g2.print(line1);
+    _u8g2.setFont(u8g2_font_helvR14_tf); _u8g2.setCursor(0,36); if(line2) _u8g2.print(line2);
+    _u8g2.setFont(u8g2_font_6x13_tf);  _u8g2.setCursor(0,56); if(line3) _u8g2.print(line3);
+
+    _display.display();
+    if (delayMs > 0) {
+        delay(delayMs);
+    }
+}
 ButtonPressType UI::getButtonPress() {
     if (_debouncer.rose()) {
         unsigned long duration = _debouncer.previousDuration();

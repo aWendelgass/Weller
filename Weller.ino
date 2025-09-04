@@ -1,4 +1,4 @@
-constexpr const char* VERSION = "Version 0.20e";
+constexpr const char* VERSION = "Version 0.20f";
 
 #include <Arduino.h>
 #include "Waage.h"
@@ -254,7 +254,7 @@ void loop() {
             break;
 
         case SystemState::CALIBRATION_STEP_1_START:
-            ui.showMessage("Alles runternehmen", "Dann Taste druecken");
+            ui.showMessage("Kalibrierung..", "Platte leeren ","Dann Taste druecken!");
             if (press == ButtonPressType::SHORT) {
                 meineWaage.tare();
                 currentState = SystemState::CALIBRATION_STEP_2_EMPTY;
@@ -262,7 +262,11 @@ void loop() {
             break;
 
         case SystemState::CALIBRATION_STEP_2_EMPTY:
-            ui.showMessage("Kal.-Gew. auflegen", "Dann Taste druecken");
+            //float calW_kg = configManager.getExtraParamFloat(key_Kalibirierungsgewicht);
+            char line2[32];
+            sprintf(line2, "%.2f kg auflegen", configManager.getExtraParamFloat(key_Kalibirierungsgewicht));
+
+            ui.showMessage("Kalibrierung..",line2, "Dann Taste druecken!");
              if (press == ButtonPressType::SHORT) {
                 meineWaage.refreshDataSet();
                 float calW_kg = configManager.getExtraParamFloat(key_Kalibirierungsgewicht);
