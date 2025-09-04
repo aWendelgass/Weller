@@ -1,0 +1,14 @@
+{
+  "name": "SaltMonitor",
+  "version": "2.3.2",
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "parts": [
+        {
+          "path": "./Weller.ino.merged.bin","offset": 0
+        }
+      ]
+    }
+  ]
+}
