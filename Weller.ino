@@ -1,4 +1,4 @@
-constexpr const char* VERSION = "Version 0.06";
+constexpr const char* VERSION = "Version 0.20";
 
 #include <Arduino.h>
 #include "Waage.h"
