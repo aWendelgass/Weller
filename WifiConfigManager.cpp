@@ -1,4 +1,5 @@
 #include "WifiConfigManager.h"
+#include "UI.h"
 #include <PubSubClient.h>
 
 // Preferences Namespaces
@@ -10,10 +11,11 @@ WifiConfigManager::WifiConfigManager(ConfigStruc* config,
                                      const WebStruc* webForm,
                                      int webFormCount,
                                      int anzExtraparams,
-                                     const char* firmwareVersion)
+                                     const char* firmwareVersion,
+                                     UI* ui)
 : _server(80), _mqttClient(_wifiClient), _config(config), _extraParams(extraParams),
   _webForm(webForm), _webFormCount(webFormCount), _anzExtraparams(anzExtraparams),
-  _firmwareVersion(firmwareVersion) {}
+  _firmwareVersion(firmwareVersion), _ui(ui) {}
 
 WifiConfigManager::~WifiConfigManager() {}
 
@@ -171,20 +173,27 @@ void WifiConfigManager::_startAP() {
   );
 
   // OTA Update Handler
-  _server.on("/update", HTTP_POST, [](AsyncWebServerRequest *request){
+  _server.on("/update", HTTP_POST, [this](AsyncWebServerRequest *request) {
     bool shouldReboot = !Update.hasError();
+    if (_ui) {
+        if(shouldReboot) _ui->showMessage("Update OK", "Neustart...", 1000);
+        else _ui->showMessage("Update fehlgeschlagen", "", 2000);
+    }
     AsyncWebServerResponse *response = request->beginResponse(200, "text/plain", shouldReboot ? "OK" : "FAIL");
     response->addHeader("Connection", "close");
     request->send(response);
     if (shouldReboot) {
-      delay(1000);
-      ESP.restart();
+        if (_ui) _ui->clear();
+        delay(1000);
+        ESP.restart();
     }
-  }, [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+  }, [this](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
     if (index == 0) {
+      if (_ui) _ui->showMessage("OTA Update", "Empfange Daten...", 0);
       Serial.printf("Update Start: %s\n", filename.c_str());
       if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
         Update.printError(Serial);
+        if (_ui) _ui->showMessage("Update Fehler", "Nicht genug Speicher?", 2000);
       }
     }
     if (!Update.hasError()) {
@@ -267,34 +276,41 @@ void WifiConfigManager::_connectToWiFi() {
     );
 
     // OTA Update Handler
-    _server.on("/update", HTTP_POST, [](AsyncWebServerRequest *request){
-      bool shouldReboot = !Update.hasError();
-      AsyncWebServerResponse *response = request->beginResponse(200, "text/plain", shouldReboot ? "OK" : "FAIL");
-      response->addHeader("Connection", "close");
-      request->send(response);
-      if (shouldReboot) {
-        delay(1000);
-        ESP.restart();
-      }
-    }, [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
-      if (index == 0) {
-        Serial.printf("Update Start: %s\n", filename.c_str());
-        if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
-          Update.printError(Serial);
+    _server.on("/update", HTTP_POST, [this](AsyncWebServerRequest *request) {
+        bool shouldReboot = !Update.hasError();
+        if (_ui) {
+            if(shouldReboot) _ui->showMessage("Update OK", "Neustart...", 1000);
+            else _ui->showMessage("Update fehlgeschlagen", "", 2000);
         }
-      }
-      if (!Update.hasError()) {
-        if (Update.write(data, len) != len) {
-          Update.printError(Serial);
+        AsyncWebServerResponse *response = request->beginResponse(200, "text/plain", shouldReboot ? "OK" : "FAIL");
+        response->addHeader("Connection", "close");
+        request->send(response);
+        if (shouldReboot) {
+            if (_ui) _ui->clear();
+            delay(1000);
+            ESP.restart();
         }
-      }
-      if (final) {
-        if (Update.end(true)) {
-          Serial.printf("Update Success: %uB\n", index + len);
-        } else {
-          Update.printError(Serial);
+    }, [this](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+        if (index == 0) {
+            if (_ui) _ui->showMessage("OTA Update", "Empfange Daten...", 0);
+            Serial.printf("Update Start: %s\n", filename.c_str());
+            if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+                Update.printError(Serial);
+                if (_ui) _ui->showMessage("Update Fehler", "Nicht genug Speicher?", 2000);
+            }
         }
-      }
+        if (!Update.hasError()) {
+            if (Update.write(data, len) != len) {
+                Update.printError(Serial);
+            }
+        }
+        if (final) {
+            if (Update.end(true)) {
+                Serial.printf("Update Success: %uB\n", index + len);
+            } else {
+                Update.printError(Serial);
+            }
+        }
     });
 
     _server.begin();

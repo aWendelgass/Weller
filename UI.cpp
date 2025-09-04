@@ -80,6 +80,13 @@ void UI::showMessage(const char* line1, const char* line2, const char* line3, in
         delay(delayMs);
     }
 }
+
+void UI::clear() {
+    if (!_oledAvailable) return;
+    _display.clearDisplay();
+    _display.display();
+}
+
 ButtonPressType UI::getButtonPress() {
     if (_debouncer.rose()) {
         unsigned long duration = _debouncer.previousDuration();
