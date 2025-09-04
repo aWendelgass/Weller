@@ -11,20 +11,6 @@ struct KalibrierungsDaten {
   bool  istKalibriert;       // Flag, ob gültige Daten vorliegen
 };
 
-// Callback-Typ für Benutzerhinweise (z. B. OLED)
-typedef void (*UiMsgFn)(const char* line1, const char* line2);
-
-// Enum for calibration state
-enum class CalibrationState {
-  IDLE,
-  WAITING_FOR_TARE,
-  TARE_DONE,
-  WAITING_FOR_WEIGHT,
-  WEIGHT_DONE,
-  FINISHED
-};
-
-
 class Waage {
 public:
   Waage(int doutPin, int sckPin);
@@ -35,17 +21,17 @@ public:
   // zyklisch aufrufen
   void loop();
 
-  // Non-blocking calibration
-  CalibrationState kalibriereWaage(CalibrationState currentState, float kalibrierungsgewicht);
-
   // Anzeigeeinstellungen: Genauigkeit in Gramm (z. B. 100 -> 1 Nachkommastelle, 10 -> 2, 1 -> 3)
   void setAnzeigeGenauigkeitGramm(uint16_t genauigkeit_g);
 
-  // Bedienfunktionen
-  void tare(); // Tarieren (setzt aktuell aufgelegtes Gewicht auf 0)
+  // Bedienfunktionen & Kalibrierungs-Helfer
+  void tare();
+  void refreshDataSet();
+  float getNewCalibration(float known_mass);
+  void setKalibrierungsfaktor(float factor);
+  void setTareOffset(long offset);
+  void setIstKalibriert(bool isCalibrated);
 
-  // UI-Callbacks setzen (für OLED-Hinweise in kalibriereWaage)
-  void setUiCallback(UiMsgFn cb);
 
   // Getter
   float getGewicht();     // in der Kalibriereinheit (hier: Gramm)
@@ -53,8 +39,7 @@ public:
   float getKalibrierungsfaktor();
   long  getTareOffset();
   bool  istKalibriert();
-  KalibrierungsDaten getKalibrierungsdaten();
-
+  
 private:
   HX711_ADC          _loadCell;
   float              _lastWeight;            // letzte Rohmessung (in g) – ungeglättet
@@ -68,9 +53,6 @@ private:
   // Anzeigeformatierung
   uint16_t _anzeigeGenauigkeit_g;            // z. B. 100 g, 10 g, 1 g
   uint8_t  _anzeigeDezimalstellen;           // abgeleitet aus Genauigkeit
-
-  // UI Callback
-  UiMsgFn  _uiCb;
 
   uint8_t _berechneDezimalstellen(uint16_t genauigkeit_g);
 };

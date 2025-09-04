@@ -10,23 +10,16 @@
 #define SCREEN_WIDTH  128
 #define SCREEN_HEIGHT 64
 
-// Button press timings from Weller.ino
-const uint16_t SHORT_PRESS_MAX_MS = 500;
-const uint16_t TARE_PRESS_MS      = 2000;
-const uint16_t CAL_PRESS_MS       = 5000;
-const uint16_t RESET_PRESS_MS     = 10000;
-const uint32_t MENU_TIMEOUT_MS    = 8000;
+// Button press timings
+const uint16_t DEBOUNCE_MS        = 30;
 
 UI::UI(int buttonPin, int ledPin) :
   _buttonPin(buttonPin),
   _ledPin(ledPin),
   _display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1),
+  _debouncer(),
   _oledAvailable(false),
-  _oledAddr(0x3C),
-  _buttonPressed(false),
-  _buttonPressStart(0),
-  _uiPage(UiPage::LIVE),
-  _lastInteractionMs(0)
+  _oledAddr(0x3C)
 {
 }
 
@@ -35,110 +28,19 @@ void UI::begin(const char* version) {
   pinMode(_ledPin, OUTPUT);
   digitalWrite(_ledPin, HIGH); // Turn LED ON at boot
 
+  _debouncer.attach(_buttonPin, INPUT_PULLUP);
+  _debouncer.interval(DEBOUNCE_MS);
+
   initOLED(version);
 }
 
-void UI::update(float weight, bool isCalibrated, bool isWifiConnected, int rssi, long tareOffset, float calFactor, String ip, bool isMqttConnected) {
-    static unsigned long lastOled = 0;
-    unsigned long now = millis();
+void UI::handleUpdates(bool isWifiConnected) {
+    _debouncer.update();
 
-    if (now - lastOled >= 500) {
-        if (_oledAvailable) {
-            if (_uiPage == UiPage::LIVE) {
-                drawLive(weight, isCalibrated, isWifiConnected, rssi);
-            } else {
-                drawMenu(tareOffset, calFactor, ip, isMqttConnected);
-            }
-        }
-        lastOled = now;
-    }
-
-    handleButton();
-    handleLedStatus(isWifiConnected);
-
-    if (_uiPage != UiPage::LIVE && (now - _lastInteractionMs >= MENU_TIMEOUT_MS)) {
-        _uiPage = UiPage::LIVE;
-    }
-}
-
-
-void UI::showMessage(const char* line1, const char* line2, int delayMs) {
-    if(!_oledAvailable) return;
-    _display.clearDisplay();
-    _u8g2.setFont(u8g2_font_6x13_tf);  _u8g2.setCursor(0,12); if(line1) _u8g2.print(line1);
-    _u8g2.setFont(u8g2_font_helvR14_tf); _u8g2.setCursor(0,36); if(line2) _u8g2.print(line2);
-    _display.display();
-    if (delayMs > 0) {
-        delay(delayMs);
-    }
-}
-
-ButtonPressType UI::getButtonPress() {
-    unsigned long pressMs = millis() - _buttonPressStart;
-    if (pressMs >= RESET_PRESS_MS) {
-        return ButtonPressType::VERY_LONG;
-    }
-    if (pressMs >= CAL_PRESS_MS) {
-        if (_uiPage == UiPage::CALIBRATION) return ButtonPressType::LONG;
-    }
-    if (pressMs >= TARE_PRESS_MS) {
-        if (_uiPage == UiPage::TARE) return ButtonPressType::LONG;
-    }
-    if (pressMs < SHORT_PRESS_MAX_MS) {
-        return ButtonPressType::SHORT;
-    }
-    return ButtonPressType::NONE;
-}
-
-void UI::handleButton() {
-    unsigned long now = millis();
-    if (digitalRead(_buttonPin) == LOW && !_buttonPressed) {
-        _buttonPressed = true;
-        _buttonPressStart = now;
-    }
-
-    if (_buttonPressed && digitalRead(_buttonPin) == HIGH) {
-        _buttonPressed = false;
-        ButtonPressType pressType = getButtonPress();
-        if (pressType == ButtonPressType::SHORT) {
-            _lastInteractionMs = now;
-            if (_uiPage == UiPage::LIVE) {
-                _uiPage = UiPage::TARE;
-            } else {
-                switch(_uiPage) {
-                    case UiPage::TARE: _uiPage = UiPage::CALIBRATION; break;
-                    case UiPage::CALIBRATION: _uiPage = UiPage::INFO; break;
-                    case UiPage::INFO: _uiPage = UiPage::RESET; break;
-                    case UiPage::RESET: _uiPage = UiPage::LIVE; break;
-                    default: _uiPage = UiPage::LIVE; break;
-                }
-            }
-        }
-    }
-}
-
-
-void UI::blinkLed(int count, int delayMs) {
-  for (int i = 0; i < count; ++i) {
-    digitalWrite(_ledPin, HIGH);
-    delay(delayMs);
-    digitalWrite(_ledPin, LOW);
-    delay(delayMs);
-  }
-}
-
-void UI::setLed(bool on) {
-    digitalWrite(_ledPin, on ? HIGH : LOW);
-}
-
-void UI::handleLedStatus(bool isWifiConnected) {
+    // LED Status Logic (can be expanded if needed)
     static unsigned long previousMillis = 0;
     static bool ledState = LOW;
-    const long interval = 500; // Blink interval 500ms -> 1Hz
-
-    if (_uiPage == UiPage::CALIBRATION) {
-        return;
-    }
+    const long interval = 500;
 
     if (isWifiConnected) {
         if (ledState == LOW) {
@@ -153,6 +55,61 @@ void UI::handleLedStatus(bool isWifiConnected) {
             digitalWrite(_ledPin, ledState);
         }
     }
+}
+
+void UI::showMessage(const char* line1, const char* line2, int delayMs) {
+    if(!_oledAvailable) return;
+    _display.clearDisplay();
+    _u8g2.setFont(u8g2_font_6x13_tf);  _u8g2.setCursor(0,12); if(line1) _u8g2.print(line1);
+    _u8g2.setFont(u8g2_font_helvR14_tf); _u8g2.setCursor(0,36); if(line2) _u8g2.print(line2);
+    _display.display();
+    if (delayMs > 0) {
+        delay(delayMs);
+    }
+}
+
+ButtonPressType UI::getButtonPress() {
+    if (_debouncer.rose()) {
+        unsigned long duration = _debouncer.previousDuration();
+        if (duration < 500) {
+            return ButtonPressType::SHORT;
+        } else if (duration >= 2000 && duration < 5000) {
+            return ButtonPressType::LONG_2S;
+        } else if (duration >= 5000 && duration < 10000) {
+            return ButtonPressType::LONG_5S;
+        } else if (duration >= 10000) {
+            return ButtonPressType::LONG_10S;
+        }
+    }
+    return ButtonPressType::NONE;
+}
+
+bool UI::isHeld() {
+    return _debouncer.read() == LOW;
+}
+
+unsigned long UI::getHoldDuration() {
+    return _debouncer.duration();
+}
+
+void UI::drawCheckmark() {
+    if (!_oledAvailable) return;
+    _u8g2.setFont(u8g2_font_unifont_t_symbols);
+    _u8g2.drawGlyph(118, 62, 0x2713); // Draw ✓ at bottom right
+    _display.display();
+}
+
+void UI::blinkLed(int count, int delayMs) {
+  for (int i = 0; i < count; ++i) {
+    digitalWrite(_ledPin, HIGH);
+    delay(delayMs);
+    digitalWrite(_ledPin, LOW);
+    delay(delayMs);
+  }
+}
+
+void UI::setLed(bool on) {
+    digitalWrite(_ledPin, on ? HIGH : LOW);
 }
 
 static bool i2cPresent(uint8_t addr){ Wire.beginTransmission(addr); return (Wire.endTransmission()==0); }
@@ -179,7 +136,7 @@ void UI::splash(const char* version){
   _display.clearDisplay();
   _u8g2.setFont(u8g2_font_7x14B_tf); _u8g2.setCursor(0,18); _u8g2.print(F("Weller Kontroller"));
   _u8g2.setFont(u8g2_font_6x13_tf);  _u8g2.setCursor(0,38); _u8g2.print(F("Smart Standby"));
-  _u8g2.print(version);
+  _u8g2.setCursor(0,58); _u8g2.print(version);
   _display.display();
   delay(1200);
 }
@@ -199,7 +156,7 @@ void UI::drawWeightValue(float kg, int16_t x, int16_t baselineY){
   _u8g2.setFont(u8g2_font_6x13_tf); _u8g2.print(F(" kg"));
 }
 
-void UI::drawLive(float weight, bool isCalibrated, bool isWifiConnected, int rssi) {
+void UI::drawLivePage(float weight, bool isCalibrated, bool isWifiConnected, int rssi) {
     if (!_oledAvailable) return;
     _display.clearDisplay();
     _u8g2.setFont(u8g2_font_6x13_tf); _u8g2.setCursor(0,12); _u8g2.print(isCalibrated ? F("Waage OK") : F("NICHT KAL."));
@@ -213,32 +170,37 @@ void UI::drawLive(float weight, bool isCalibrated, bool isWifiConnected, int rss
     _display.display();
 }
 
-void UI::drawMenu(long tareOffset, float calFactor, String ip, bool isMqttConnected) {
+void UI::drawTarePage() {
     if (!_oledAvailable) return;
     _display.clearDisplay();
-    _u8g2.setFont(u8g2_font_6x13_tf); _u8g2.setCursor(0,12);
-    switch(_uiPage){
-        case UiPage::TARE:
-            _u8g2.setCursor(0,28); _u8g2.print(F("> Tare"));
-            _u8g2.setFont(u8g2_font_helvR14_tf); _u8g2.setCursor(0,52); _u8g2.print(F("2 s halten"));
-            break;
-        case UiPage::CALIBRATION:
-            _u8g2.setFont(u8g2_font_6x13_tf); _u8g2.setCursor(0,28); _u8g2.print(F("< Kalibrieren"));
-            _u8g2.setFont(u8g2_font_helvR14_tf); _u8g2.setCursor(0,52); _u8g2.print(F("5 s halten"));
-            break;
-        case UiPage::INFO: {
-            _u8g2.setFont(u8g2_font_6x12_tf);
-            _u8g2.setCursor(0,20); _u8g2.print(F("CalF: "));  _u8g2.print(calFactor, 4);
-            _u8g2.setCursor(0,32); _u8g2.print(F("Offset: ")); _u8g2.print(tareOffset);
-            _u8g2.setCursor(0,44); _u8g2.print(F("IP: "));     _u8g2.print(ip);
-            _u8g2.setCursor(0,56); _u8g2.print(F("MQTT: "));   _u8g2.print(isMqttConnected ? F("verbunden") : F("NICHT"));
-            }
-            break;
-        case UiPage::RESET:
-            _u8g2.setFont(u8g2_font_6x13_tf); _u8g2.setCursor(0,28); _u8g2.print(F("NVS löschen"));
-            _u8g2.setFont(u8g2_font_helvR14_tf); _u8g2.setCursor(0,52); _u8g2.print(F("10 s halten"));
-            break;
-        default: break;
-    }
+    _u8g2.setFont(u8g2_font_6x13_tf); _u8g2.setCursor(0,28); _u8g2.print(F("> Tare"));
+    _u8g2.setFont(u8g2_font_helvR14_tf); _u8g2.setCursor(0,52); _u8g2.print(F("2 s halten"));
+    _display.display();
+}
+
+void UI::drawCalibratePage() {
+    if (!_oledAvailable) return;
+    _display.clearDisplay();
+    _u8g2.setFont(u8g2_font_6x13_tf); _u8g2.setCursor(0,28); _u8g2.print(F("< Kalibrieren"));
+    _u8g2.setFont(u8g2_font_helvR14_tf); _u8g2.setCursor(0,52); _u8g2.print(F("5 s halten"));
+    _display.display();
+}
+
+void UI::drawInfoPage(long tareOffset, float calFactor, String ip, bool isMqttConnected) {
+    if (!_oledAvailable) return;
+    _display.clearDisplay();
+    _u8g2.setFont(u8g2_font_6x12_tf);
+    _u8g2.setCursor(0,20); _u8g2.print(F("CalF: "));  _u8g2.print(calFactor, 4);
+    _u8g2.setCursor(0,32); _u8g2.print(F("Offset: ")); _u8g2.print(tareOffset);
+    _u8g2.setCursor(0,44); _u8g2.print(F("IP: "));     _u8g2.print(ip);
+    _u8g2.setCursor(0,56); _u8g2.print(F("MQTT: "));   _u8g2.print(isMqttConnected ? F("verbunden") : F("NICHT"));
+    _display.display();
+}
+
+void UI::drawResetPage() {
+    if (!_oledAvailable) return;
+    _display.clearDisplay();
+    _u8g2.setFont(u8g2_font_6x13_tf); _u8g2.setCursor(0,28); _u8g2.print(F("NVS löschen"));
+    _u8g2.setFont(u8g2_font_helvR14_tf); _u8g2.setCursor(0,52); _u8g2.print(F("10 s halten"));
     _display.display();
 }

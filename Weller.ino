@@ -1,4 +1,4 @@
-constexpr const char* VERSION = "Version 0.20";
+constexpr const char* VERSION = "Version 0.20e";
 
 #include <Arduino.h>
 #include "Waage.h"
@@ -62,9 +62,27 @@ Waage meineWaage(HX711_DOUT, HX711_SCK);
 UI ui(BUTTON_PIN, LED_PIN);
 
 // ------------------------------
-// Globals for calibration state machine
+// Finite State Machine (FSM)
 // ------------------------------
-CalibrationState calibrationState = CalibrationState::IDLE;
+enum class SystemState {
+    LIVE_VIEW,
+    MENU_TARE,
+    MENU_CALIBRATE,
+    MENU_INFO,
+    MENU_RESET,
+    CALIBRATION_CHECK_WEIGHT,
+    CALIBRATION_STEP_1_START,
+    CALIBRATION_STEP_2_EMPTY,
+    CALIBRATION_STEP_3_WEIGHT,
+    CALIBRATION_DONE
+};
+
+SystemState currentState = SystemState::LIVE_VIEW;
+#if WAAGE_DEBUG
+SystemState lastPublishedState = SystemState::LIVE_VIEW;
+#endif
+unsigned long menuTimeoutStart = 0;
+const unsigned long MENU_TIMEOUT_MS    = 8000;
 
 // ------------------------------
 // Helpers
@@ -87,24 +105,36 @@ static String getBaseTopic() {
     return base;
 }
 
-static void uiCallback(const char* line1, const char* line2) {
-    ui.showMessage(line1, line2);
+#if WAAGE_DEBUG
+const char* systemStateToString(SystemState state) {
+    switch (state) {
+        case SystemState::LIVE_VIEW: return "LIVE_VIEW";
+        case SystemState::MENU_TARE: return "MENU_TARE";
+        case SystemState::MENU_CALIBRATE: return "MENU_CALIBRATE";
+        case SystemState::MENU_INFO: return "MENU_INFO";
+        case SystemState::MENU_RESET: return "MENU_RESET";
+        case SystemState::CALIBRATION_CHECK_WEIGHT: return "CALIBRATION_CHECK_WEIGHT";
+        case SystemState::CALIBRATION_STEP_1_START: return "CALIBRATION_STEP_1_START";
+        case SystemState::CALIBRATION_STEP_2_EMPTY: return "CALIBRATION_STEP_2_EMPTY";
+        case SystemState::CALIBRATION_STEP_3_WEIGHT: return "CALIBRATION_STEP_3_WEIGHT";
+        case SystemState::CALIBRATION_DONE: return "CALIBRATION_DONE";
+        default: return "UNKNOWN_STATE";
+    }
 }
+#endif
+
 
 // ------------------------------
 // MQTT
 // ------------------------------
 static void mqttPublishLoop() {
     static unsigned long lastMqttPub = 0;
-    const unsigned long MQTT_PUB_MS = 5000;
+    if (millis() - lastMqttPub < 5000) return;
+    lastMqttPub = millis();
 
     if (!configManager.isWifiConnected()) return;
     configManager.ensureMqttConnected();
     if (!configManager.isMqttConnected()) return;
-
-    unsigned long now = millis();
-    if (now - lastMqttPub < MQTT_PUB_MS) return;
-    lastMqttPub = now;
 
     String base = getBaseTopic();
     char buf[16];
@@ -115,7 +145,7 @@ static void mqttPublishLoop() {
 }
 
 // ------------------------------
-// Setup & Loop
+// Setup
 // ------------------------------
 void setup() {
     Serial.begin(115200);
@@ -130,76 +160,144 @@ void setup() {
     kd.tareOffset          = configManager.getExtraParamInt(key_offset);
     kd.istKalibriert       = configManager.getExtraParamBool(key_kalibriert);
     meineWaage.begin(kd);
+    meineWaage.tare();
     meineWaage.setAnzeigeGenauigkeitGramm(100);
-    meineWaage.setUiCallback(uiCallback);
 }
 
+// ------------------------------
+// Loop - FSM Implementation
+// ------------------------------
 void loop() {
+    // --- Continuous updates ---
     configManager.handleLoop();
     meineWaage.loop();
     mqttPublishLoop();
+    ui.handleUpdates(configManager.isWifiConnected());
 
-    ui.update(
-        meineWaage.getGewichtKg(),
-        meineWaage.istKalibriert(),
-        configManager.isWifiConnected(),
-        configManager.getRSSI(),
-        meineWaage.getTareOffset(),
-        meineWaage.getKalibrierungsfaktor(),
-        WiFi.localIP().toString(),
-        configManager.isMqttConnected()
-    );
-
+    // --- Get button press ---
     ButtonPressType press = ui.getButtonPress();
 
-    if (ui.getUiPage() == UI::UiPage::CALIBRATION) {
-        if (calibrationState == CalibrationState::IDLE) {
-            calibrationState = meineWaage.kalibriereWaage(calibrationState, 0.0f);
-        }
-        if (press == ButtonPressType::SHORT) {
-            if (calibrationState == CalibrationState::WAITING_FOR_TARE) {
-                calibrationState = CalibrationState::TARE_DONE;
-                ui.blinkLed(3, 100);
-            } else if (calibrationState == CalibrationState::WAITING_FOR_WEIGHT) {
-                calibrationState = CalibrationState::WEIGHT_DONE;
-            }
-        }
-        float calW_kg = configManager.getExtraParamFloat(key_Kalibirierungsgewicht);
-        if (calW_kg <= 0.0f) {
-            ui.showMessage("Kal.-Gew. fehlt", "im Webformular", 2000);
-            ui.setUiPage(UI::UiPage::LIVE);
-        } else {
-            const float calW_g = calW_kg * 1000.0f;
-            calibrationState = meineWaage.kalibriereWaage(calibrationState, calW_g);
+    // --- Menu Timeout Logic ---
+    bool isMenuState = (currentState == SystemState::MENU_TARE ||
+                        currentState == SystemState::MENU_CALIBRATE ||
+                        currentState == SystemState::MENU_INFO ||
+                        currentState == SystemState::MENU_RESET);
 
-            if (calibrationState == CalibrationState::FINISHED) {
-                KalibrierungsDaten neu = meineWaage.getKalibrierungsdaten();
-                setExtraFloat(key_Kalibirierungfaktor, neu.kalibrierungsfaktor);
-                setExtraLong(key_offset, neu.tareOffset);
+    if (isMenuState && millis() - menuTimeoutStart > MENU_TIMEOUT_MS) {
+        currentState = SystemState::LIVE_VIEW;
+    }
+
+    // --- FSM State Handling ---
+    switch (currentState) {
+        case SystemState::LIVE_VIEW:
+            ui.drawLivePage(meineWaage.getGewichtKg(), meineWaage.istKalibriert(), configManager.isWifiConnected(), configManager.getRSSI());
+            if (press == ButtonPressType::SHORT) {
+                currentState = SystemState::MENU_TARE;
+                menuTimeoutStart = millis();
+            }
+            break;
+
+        case SystemState::MENU_TARE:
+            ui.drawTarePage();
+            if (press == ButtonPressType::SHORT) {
+                currentState = SystemState::MENU_CALIBRATE;
+                menuTimeoutStart = millis();
+            } else if (press == ButtonPressType::LONG_2S) {
+                meineWaage.tare();
+                setExtraLong(key_offset, meineWaage.getTareOffset());
+                configManager.saveConfig();
+                ui.showMessage("Tare", "erfolgreich", 1000);
+                currentState = SystemState::LIVE_VIEW;
+            }
+            break;
+
+        case SystemState::MENU_CALIBRATE:
+            ui.drawCalibratePage();
+            if (ui.isHeld() && ui.getHoldDuration() > 5000) {
+                ui.drawCheckmark();
+            }
+            if (press == ButtonPressType::SHORT) {
+                currentState = SystemState::MENU_INFO;
+                menuTimeoutStart = millis();
+            } else if (press == ButtonPressType::LONG_5S) {
+                currentState = SystemState::CALIBRATION_CHECK_WEIGHT;
+            }
+            break;
+
+        case SystemState::MENU_INFO:
+            ui.drawInfoPage(meineWaage.getTareOffset(), meineWaage.getKalibrierungsfaktor(), WiFi.localIP().toString(), configManager.isMqttConnected());
+            if (press == ButtonPressType::SHORT) {
+                currentState = SystemState::MENU_RESET;
+                menuTimeoutStart = millis();
+            }
+            break;
+
+        case SystemState::MENU_RESET:
+            ui.drawResetPage();
+            if (press == ButtonPressType::SHORT) {
+                currentState = SystemState::LIVE_VIEW;
+            } else if (press == ButtonPressType::LONG_10S) {
+                factoryResetAndReboot();
+            }
+            break;
+            
+        case SystemState::CALIBRATION_CHECK_WEIGHT:
+            {
+                float calW_kg = configManager.getExtraParamFloat(key_Kalibirierungsgewicht);
+                if (calW_kg <= 0.0f) {
+                    ui.showMessage("Kal.-Gew. fehlt", "im Webformular", 2000);
+                    currentState = SystemState::LIVE_VIEW;
+                } else {
+                    currentState = SystemState::CALIBRATION_STEP_1_START;
+                }
+            }
+            break;
+
+        case SystemState::CALIBRATION_STEP_1_START:
+            ui.showMessage("Alles runternehmen", "Dann Taste druecken");
+            if (press == ButtonPressType::SHORT) {
+                meineWaage.tare();
+                currentState = SystemState::CALIBRATION_STEP_2_EMPTY;
+            }
+            break;
+
+        case SystemState::CALIBRATION_STEP_2_EMPTY:
+            ui.showMessage("Kal.-Gew. auflegen", "Dann Taste druecken");
+             if (press == ButtonPressType::SHORT) {
+                meineWaage.refreshDataSet();
+                float calW_kg = configManager.getExtraParamFloat(key_Kalibirierungsgewicht);
+                float newCalFactor = meineWaage.getNewCalibration(calW_kg * 1000.0f);
+                meineWaage.setKalibrierungsfaktor(newCalFactor);
+                meineWaage.setIstKalibriert(true);
+                
+                setExtraFloat(key_Kalibirierungfaktor, newCalFactor);
+                setExtraLong(key_offset, meineWaage.getTareOffset());
                 setExtraBool(key_kalibriert, true);
                 configManager.saveConfig();
-                ui.showMessage("Kalibrierung", "beendet", 1200);
-                ui.setUiPage(UI::UiPage::LIVE);
-                calibrationState = CalibrationState::IDLE;
+                
+                currentState = SystemState::CALIBRATION_DONE;
+            }
+            break;
+
+        case SystemState::CALIBRATION_DONE:
+            ui.showMessage("Kalibrierung", "erfolgreich", 1200);
+            currentState = SystemState::LIVE_VIEW;
+            break;
+    }
+
+    #if WAAGE_DEBUG
+    if (currentState != lastPublishedState) {
+        if (configManager.isWifiConnected()) {
+            configManager.ensureMqttConnected();
+            if (configManager.isMqttConnected()) {
+                char json_payload[128];
+                snprintf(json_payload, sizeof(json_payload), "{\"id\":%d, \"state\":\"%s\"}", static_cast<int>(currentState), systemStateToString(currentState));
+                String topic = getBaseTopic() + F("/fsm_state");
+                configManager.publish(topic.c_str(), json_payload, true, 0);
+                Serial.printf("Published FSM state: %s\n", json_payload);
             }
         }
-    } else {
-        calibrationState = CalibrationState::IDLE;
+        lastPublishedState = currentState;
     }
-
-    if (press == ButtonPressType::LONG) {
-        if (ui.getUiPage() == UI::UiPage::TARE) {
-            meineWaage.tare();
-            long newOffset = meineWaage.getTareOffset();
-            setExtraLong(key_offset, newOffset);
-            setExtraBool(key_kalibriert, true);
-            configManager.saveConfig();
-        }
-    }
-
-    if (press == ButtonPressType::VERY_LONG) {
-        if (ui.getUiPage() == UI::UiPage::RESET) {
-            factoryResetAndReboot();
-        }
-    }
+    #endif
 }

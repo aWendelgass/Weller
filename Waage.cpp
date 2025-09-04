@@ -15,8 +15,7 @@ Waage::Waage(int doutPin, int sckPin)
   _hasLastPrinted(false),
   _hasLastOutput(false),
   _anzeigeGenauigkeit_g(1000),          // Default: 1000 g (2 Nachkommastelle in kg)
-  _anzeigeDezimalstellen(1),
-  _uiCb(nullptr)
+  _anzeigeDezimalstellen(1)
 {}
 
 void Waage::begin(const KalibrierungsDaten& daten) {
@@ -107,63 +106,6 @@ void Waage::loop() {
   }
 }
 
-CalibrationState Waage::kalibriereWaage(CalibrationState currentState, float kalibrierungsgewicht) {
-    switch (currentState) {
-        case CalibrationState::IDLE:
-            if (_uiCb) _uiCb("Alles runternehmen", "Taste drücken …");
-            Serial.println(F("Nimm alles von der Waage. Drücke den Taster, um fortzufahren."));
-            return CalibrationState::WAITING_FOR_TARE;
-
-        case CalibrationState::WAITING_FOR_TARE:
-            // This state is just for waiting for user input, which is handled in the main loop
-            return CalibrationState::WAITING_FOR_TARE;
-
-        case CalibrationState::TARE_DONE:
-            _loadCell.tare();
-            if (_uiCb) _uiCb("Tare abgeschlossen", "Kal.-Gew. auflegen");
-            Serial.println(F("Tare abgeschlossen."));
-            return CalibrationState::WAITING_FOR_WEIGHT;
-
-        case CalibrationState::WAITING_FOR_WEIGHT:
-            {
-                long g = lroundf(kalibrierungsgewicht);
-                char line2[32];
-                snprintf(line2, sizeof(line2), "Gewicht %ld g", g);
-                if (_uiCb) _uiCb("Lege Kalibriergewicht", line2);
-                Serial.print(F("Lege nun das Kalibrierungsgewicht ("));
-                Serial.print(g);
-                Serial.println(F(" g) auf. Drücke den Taster, um fortzufahren."));
-            }
-            return CalibrationState::WAITING_FOR_WEIGHT;
-
-        case CalibrationState::WEIGHT_DONE:
-            _loadCell.refreshDataSet();
-            _daten.kalibrierungsfaktor = _loadCell.getNewCalibration(kalibrierungsgewicht);
-            _daten.tareOffset          = _loadCell.getTareOffset();
-            _daten.istKalibriert       = true;
-
-            _loadCell.setCalFactor(_daten.kalibrierungsfaktor);
-            _loadCell.setTareOffset(_daten.tareOffset);
-
-            _hasLastOutput  = false;
-            _hasLastPrinted = false;
-            _lastWeight     = 0.0f;
-            _emaInit        = false;
-
-            if (_uiCb) _uiCb("Kalibrierung fertig", "");
-            Serial.print(F("Kalibrierung abgeschlossen. Faktor: "));
-            Serial.println(_daten.kalibrierungsfaktor, 5);
-            Serial.print(F("Tare Offset: "));
-            Serial.println(_daten.tareOffset);
-            return CalibrationState::FINISHED;
-
-        case CalibrationState::FINISHED:
-            return CalibrationState::FINISHED;
-    }
-    return CalibrationState::IDLE;
-}
-
-
 void Waage::setAnzeigeGenauigkeitGramm(uint16_t genauigkeit_g) {
   if (genauigkeit_g == 0) genauigkeit_g = 1; // Schutz
   _anzeigeGenauigkeit_g  = genauigkeit_g;
@@ -179,7 +121,27 @@ void Waage::tare() {
   Serial.println(F("Tare durchgeführt."));
 }
 
-void Waage::setUiCallback(UiMsgFn cb) { _uiCb = cb; }
+void Waage::refreshDataSet() {
+    _loadCell.refreshDataSet();
+}
+
+float Waage::getNewCalibration(float known_mass) {
+    return _loadCell.getNewCalibration(known_mass);
+}
+
+void Waage::setKalibrierungsfaktor(float factor) {
+    _daten.kalibrierungsfaktor = factor;
+    _loadCell.setCalFactor(factor);
+}
+
+void Waage::setTareOffset(long offset) {
+    _daten.tareOffset = offset;
+    _loadCell.setTareOffset(offset);
+}
+
+void Waage::setIstKalibriert(bool isCalibrated) {
+    _daten.istKalibriert = isCalibrated;
+}
 
 float Waage::getGewicht() {
   _loadCell.update();
@@ -190,7 +152,6 @@ float Waage::getGewichtKg() { return getGewicht() / 1000.0f; }
 float Waage::getKalibrierungsfaktor() { return _daten.kalibrierungsfaktor; }
 long  Waage::getTareOffset() { return _loadCell.getTareOffset(); }
 bool  Waage::istKalibriert() { return _daten.istKalibriert; }
-KalibrierungsDaten Waage::getKalibrierungsdaten() { return _daten; }
 
 uint8_t Waage::_berechneDezimalstellen(uint16_t genauigkeit_g) {
   // Gramm-Genauigkeit -> Nachkommastellen in kg
