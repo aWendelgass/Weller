@@ -1,4 +1,3 @@
-
 #ifndef WAAGE_H
 #define WAAGE_H
 
@@ -15,9 +14,20 @@ struct KalibrierungsDaten {
 // Callback-Typ für Benutzerhinweise (z. B. OLED)
 typedef void (*UiMsgFn)(const char* line1, const char* line2);
 
+// Enum for calibration state
+enum class CalibrationState {
+  IDLE,
+  WAITING_FOR_TARE,
+  TARE_DONE,
+  WAITING_FOR_WEIGHT,
+  WEIGHT_DONE,
+  FINISHED
+};
+
+
 class Waage {
 public:
-  Waage(int doutPin, int sckPin, int tastenPin, int ledPin);
+  Waage(int doutPin, int sckPin);
 
   // Start mit übergebenen Kalibrierdaten
   void begin(const KalibrierungsDaten& daten);
@@ -25,8 +35,8 @@ public:
   // zyklisch aufrufen
   void loop();
 
-  // Interaktive Kalibrierung mit bekanntem Referenzgewicht (in Gramm)
-  KalibrierungsDaten kalibriereWaage(float kalibrierungsgewicht);
+  // Non-blocking calibration
+  CalibrationState kalibriereWaage(CalibrationState currentState, float kalibrierungsgewicht);
 
   // Anzeigeeinstellungen: Genauigkeit in Gramm (z. B. 100 -> 1 Nachkommastelle, 10 -> 2, 1 -> 3)
   void setAnzeigeGenauigkeitGramm(uint16_t genauigkeit_g);
@@ -43,6 +53,7 @@ public:
   float getKalibrierungsfaktor();
   long  getTareOffset();
   bool  istKalibriert();
+  KalibrierungsDaten getKalibrierungsdaten();
 
 private:
   HX711_ADC          _loadCell;
@@ -52,8 +63,6 @@ private:
   float              _lastPrintedKg;         // letzte ausgegebene, GERUNDETE kg
   bool               _hasLastPrinted;        // schon etwas ausgegeben
   bool               _hasLastOutput;         // Alt: verhindert Fluten
-  int                _tastenPin;
-  int                _ledPin;
   KalibrierungsDaten _daten;
 
   // Anzeigeformatierung
@@ -63,8 +72,6 @@ private:
   // UI Callback
   UiMsgFn  _uiCb;
 
-  void    _warteAufTasterDruck();            // erwartet Taster als INPUT_PULLUP (aktiv LOW)
-  void    _blinkLED(int count, int delayMs);
   uint8_t _berechneDezimalstellen(uint16_t genauigkeit_g);
 };
 
