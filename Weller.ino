@@ -53,13 +53,13 @@ const WebStruc webForm[] = {
 };
 constexpr size_t ANZ_WEBFORM_ITEMS = sizeof(webForm) / sizeof(webForm[0]);
 
-WifiConfigManager configManager(&config, extraParams, webForm, ANZ_WEBFORM_ITEMS, ANZ_EXTRA_PARAMS, VERSION);
+UI ui(BUTTON_PIN, LED_PIN);
+WifiConfigManager configManager(&config, extraParams, webForm, ANZ_WEBFORM_ITEMS, ANZ_EXTRA_PARAMS, VERSION, &ui);
 
 // ------------------------------
 // Module instances
 // ------------------------------
 Waage meineWaage(HX711_DOUT, HX711_SCK);
-UI ui(BUTTON_PIN, LED_PIN);
 
 // ------------------------------
 // Finite State Machine (FSM)

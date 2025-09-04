@@ -9,6 +9,8 @@
 #include <PubSubClient.h>
 #include <Update.h>
 
+class UI; // Forward declaration
+
 // --- Strukturen und Enums ---
 enum FormType { STRING, FLOAT, BOOL, LONG };
 enum LineType { CONFIGBLOCK, TITLE, SUBTITLE, SEPARATOR, BLANK, PARAMETER };
@@ -49,7 +51,8 @@ public:
                     const WebStruc* webForm,
                     int webFormCount,
                     int anzExtraparams,
-                    const char* firmwareVersion);
+                    const char* firmwareVersion,
+                    UI* ui);
   ~WifiConfigManager();
 
   // Lebenszyklus
@@ -100,6 +103,7 @@ private:
   ExtraStruc*     _extraParams;
   const WebStruc* _webForm;
   int             _webFormCount;
+  UI*             _ui;
 
   // intern
   void _startAP();

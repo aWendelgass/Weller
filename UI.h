@@ -33,6 +33,7 @@ public:
   void drawResetPage();
   void showMessage(const char* line1, const char* line2, int delayMs = 0);
   void showMessage(const char* line1, const char* line2, const char* line3, int delayMs=0);
+  void clear();
 
   void drawCheckmark();
   
