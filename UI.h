@@ -44,8 +44,7 @@ public:
 private:
   void initOLED(const char* version);
   void splash(const char* version);
-  String formatKgComma(float kg, uint8_t decimals);
-  void drawWeightValue(float kg, int16_t x, int16_t baselineY);
+  void drawWeightValue(int gramm, int16_t x, int16_t baselineY);
 
   int _buttonPin;
   int _ledPin;

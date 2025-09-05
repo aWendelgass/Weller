@@ -1,8 +1,13 @@
-constexpr const char* VERSION = "Version 0.30";
+constexpr const char* VERSION = "Version 0.30f";
+
 
 // Changelog:
-//    V0.30: Neues Konfigurationselement: Lötkolbengewicht eingeführt 46g Default
-
+//    V0.30:    Neues Konfigurationselement: Lötkolbengewicht eingeführt 46g Default
+//    V0.30a:   Kakibrieungsgewicht nun in gramm
+//    V0.30c:   Anzeige in gramm
+//    V0.30d:   angepasstes Tara
+//    V0.30e    verbesserter Tara und Restart Prozess  
+//    V0.30f:   verbesserterRestart Prozess  
 
 #include <Arduino.h>
 #include "Waage.h"
@@ -37,7 +42,7 @@ ConfigStruc config = {
 #define key_kolbengewicht         "ioronG"
 
 ExtraStruc extraParams[] = {  // Reiehnfolge der Typen: keyName[16] | FormType | TEXTvalue[64] | FLOATvalue | BOOLvalue | LONGvalue | bool optional | bool inputParam
-  { key_Kalibirierungsgewicht, LONG, "", 0.41, false, -1, false, true },
+  { key_Kalibirierungsgewicht, LONG, "", -1.0, false, 410, false, true },
   { key_Kalibrierungsfaktor,   FLOAT, "", 1.0,  false, -1, false, false },
   { key_offset,                LONG,  "", -1.0, false, 0,  false, false },
   { key_kalibriert,            BOOL,  "", -1.0, false, -1, false, false },
@@ -50,7 +55,7 @@ const WebStruc webForm[] = {
   { TITLE, "Weller Controller", "" },
   { CONFIGBLOCK, "", "" },
   { BLANK, "", "" }, { SEPARATOR, "", "" }, { BLANK, "", "" },
-  { PARAMETER, "Kalibrierungsgewicht (g)", key_Kalibirierungsgewicht },
+  { PARAMETER, "Kalibrierungsgewicht [g]", key_Kalibirierungsgewicht },
   { PARAMETER, "Lötkolbengewicht [g]",      key_kolbengewicht },
   { PARAMETER, "Kalibrierungsfaktor",       key_Kalibrierungsfaktor },
   { PARAMETER, "Waagen-Offset",             key_offset },
@@ -103,7 +108,9 @@ static void factoryResetAndReboot(){
   Preferences p;
   p.begin("network", false); p.clear(); p.end();
   p.begin("operation", false); p.clear(); p.end();
-  delay(200);
+  ui.showMessage("Neustart.....", "", 0);
+  unsigned long startTime = millis();
+  while(millis() - startTime < 2000) { /* non-blocking delay */ }
   ESP.restart();
 }
 
@@ -146,8 +153,8 @@ static void mqttPublishLoop() {
 
     String base = getBaseTopic();
     char buf[16];
-    dtostrf(meineWaage.getGewichtKg(), 0, 1, buf);
-    configManager.publish((base + F("/gewicht_kg")).c_str(), String(buf), true, 0);
+    dtostrf(meineWaage.getGewicht(), 0, 0, buf);
+    configManager.publish((base + F("/gewicht_g")).c_str(), String(buf), true, 0);
     configManager.publish((base + F("/calibrated")).c_str(), meineWaage.istKalibriert() ? "1" : "0", true, 0);
     configManager.publish((base + F("/rssi")).c_str(), String(configManager.getRSSI()), true, 0);
 }
@@ -168,8 +175,7 @@ void setup() {
     kd.tareOffset          = configManager.getExtraParamInt(key_offset);
     kd.istKalibriert       = configManager.getExtraParamBool(key_kalibriert);
     meineWaage.begin(kd);
-    //meineWaage.tare(); 
-    meineWaage.setAnzeigeGenauigkeitGramm(100);
+    meineWaage.tare(); 
 }
 
 // ------------------------------
@@ -198,7 +204,7 @@ void loop() {
     // --- FSM State Handling ---
     switch (currentState) {
         case SystemState::LIVE_VIEW:
-            ui.drawLivePage(meineWaage.getGewichtKg(), meineWaage.istKalibriert(), configManager.isWifiConnected(), configManager.getRSSI());
+            ui.drawLivePage(meineWaage.getGewicht(), meineWaage.istKalibriert(), configManager.isWifiConnected(), configManager.getRSSI());
             if (press == ButtonPressType::SHORT) {
                 currentState = SystemState::MENU_TARE;
                 menuTimeoutStart = millis();
@@ -212,8 +218,6 @@ void loop() {
                 menuTimeoutStart = millis();
             } else if (press == ButtonPressType::LONG_2S) {
                 meineWaage.tare();
-                setExtraLong(key_offset, meineWaage.getTareOffset());
-                configManager.saveConfig();
                 ui.showMessage("Tare", "erfolgreich", 1000);
                 currentState = SystemState::LIVE_VIEW;
             }
@@ -251,8 +255,8 @@ void loop() {
             
         case SystemState::CALIBRATION_CHECK_WEIGHT:
             {
-                float calW_kg = configManager.getExtraParamFloat(key_Kalibirierungsgewicht);
-                if (calW_kg <= 0.0f) {
+                long calW_g = configManager.getExtraParamInt(key_Kalibirierungsgewicht);
+                if (calW_g <= 0) {
                     ui.showMessage("Kal.-Gew. fehlt", "im Webformular", 2000);
                     currentState = SystemState::LIVE_VIEW;
                 } else {
@@ -272,13 +276,13 @@ void loop() {
         case SystemState::CALIBRATION_STEP_2_EMPTY:
             //float calW_kg = configManager.getExtraParamFloat(key_Kalibirierungsgewicht);
             char line2[32];
-            sprintf(line2, "%.2f kg auflegen", configManager.getExtraParamFloat(key_Kalibirierungsgewicht));
+            sprintf(line2, "%ld g auflegen", configManager.getExtraParamInt(key_Kalibirierungsgewicht));
 
             ui.showMessage("Kalibrierung..",line2, "Dann Taste druecken!");
              if (press == ButtonPressType::SHORT) {
                 meineWaage.refreshDataSet();
-                float calW_kg = configManager.getExtraParamFloat(key_Kalibirierungsgewicht);
-                float newCalFactor = meineWaage.getNewCalibration(calW_kg * 1000.0f);
+                long calW_g = configManager.getExtraParamInt(key_Kalibirierungsgewicht);
+                float newCalFactor = meineWaage.getNewCalibration(calW_g);
                 meineWaage.setKalibrierungsfaktor(newCalFactor);
                 meineWaage.setIstKalibriert(true);
                 
@@ -293,6 +297,7 @@ void loop() {
 
         case SystemState::CALIBRATION_DONE:
             ui.showMessage("Kalibrierung", "erfolgreich", 1200);
+            meineWaage.tare();
             currentState = SystemState::LIVE_VIEW;
             break;
     }

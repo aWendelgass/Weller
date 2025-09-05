@@ -11,11 +11,7 @@ Waage::Waage(int doutPin, int sckPin)
   _lastWeight(0.0f),
   _emaWeight(0.0f),
   _emaInit(false),
-  _lastPrintedKg(0.0f),
-  _hasLastPrinted(false),
-  _hasLastOutput(false),
-  _anzeigeGenauigkeit_g(1000),          // Default: 1000 g (2 Nachkommastelle in kg)
-  _anzeigeDezimalstellen(1)
+  _hasLastOutput(false)
 {}
 
 void Waage::begin(const KalibrierungsDaten& daten) {
@@ -35,7 +31,6 @@ void Waage::begin(const KalibrierungsDaten& daten) {
 
   // Reset Tracking
   _hasLastOutput  = false;
-  _hasLastPrinted = false;
   _lastWeight     = 0.0f;
   _emaInit        = false;
 }
@@ -64,12 +59,12 @@ void Waage::loop() {
       if (!_emaInit) { _emaWeight = gewicht_g; _emaInit = true; }
       else { _emaWeight = EMA_ALPHA * gewicht_g + (1.0f - EMA_ALPHA) * _emaWeight; }
 
-      // Signifikanz-Logik: Prozentänderung ODER absolute Schwelle (halbe Anzeige-Genauigkeit)
+      // Signifikanz-Logik: Prozentänderung ODER absolute Schwelle
       const float absDelta_g    = fabsf(_emaWeight - _lastWeight);
       const float pctChange     = (_hasLastOutput && fabsf(_lastWeight) > 0.0f)
                                 ? (absDelta_g / fabsf(_lastWeight)) * 100.0f
                                 : 0.0f;
-      const float absThreshold_g = max(1.0f, _anzeigeGenauigkeit_g * 0.5f); // mind. 1 g
+      const float absThreshold_g = 1.0f; // 1g
 
       bool significant = false;
       if (!_hasLastOutput) {
@@ -84,17 +79,9 @@ void Waage::loop() {
         _lastWeight    = _emaWeight;
         _hasLastOutput = true;
 
-        // Ausgabe nur, wenn sich die GERUNDETE Anzeige ändert (verhindert 0.0-Fluten)
-        float kg           = _emaWeight / 1000.0f;
-        float factor       = powf(10.00f, _anzeigeDezimalstellen);
-        float roundedKg    = roundf(kg * factor) / factor;
-        if (!_hasLastPrinted || fabsf(roundedKg - _lastPrintedKg) > (0.5f / factor)) {
-          _lastPrintedKg   = roundedKg;
-          _hasLastPrinted  = true;
-          Serial.print(F("Gewicht: "));
-          Serial.print(roundedKg, _anzeigeDezimalstellen);
-          Serial.println(F(" kg"));
-        }
+        Serial.print(F("Gewicht: "));
+        Serial.print(roundf(_emaWeight));
+        Serial.println(F(" g"));
       }
     } else {
       if (!waitmessagesent){
@@ -106,16 +93,14 @@ void Waage::loop() {
   }
 }
 
-void Waage::setAnzeigeGenauigkeitGramm(uint16_t genauigkeit_g) {
-  if (genauigkeit_g == 0) genauigkeit_g = 1; // Schutz
-  _anzeigeGenauigkeit_g  = genauigkeit_g;
-  _anzeigeDezimalstellen = _berechneDezimalstellen(genauigkeit_g);
-}
-
 void Waage::tare() {
+  Serial.println(F("Stabilisiere vor Tare..."));
+  _loadCell.update();
+  delay(200);
+  _loadCell.update();
+  
   _loadCell.tare();
   _hasLastOutput  = false; // nächste Ausgabe wieder zulassen
-  _hasLastPrinted = false;
   _lastWeight     = 0.0f;
   _emaInit        = false;
   Serial.println(F("Tare durchgeführt."));
@@ -144,20 +129,9 @@ void Waage::setIstKalibriert(bool isCalibrated) {
 }
 
 float Waage::getGewicht() {
-  _loadCell.update();
-  return _loadCell.getData(); // Gramm (wenn in g kalibriert)
+  return _emaWeight;
 }
 
-float Waage::getGewichtKg() { return getGewicht() / 1000.0f; }
 float Waage::getKalibrierungsfaktor() { return _daten.kalibrierungsfaktor; }
 long  Waage::getTareOffset() { return _loadCell.getTareOffset(); }
 bool  Waage::istKalibriert() { return _daten.istKalibriert; }
-
-uint8_t Waage::_berechneDezimalstellen(uint16_t genauigkeit_g) {
-  // Gramm-Genauigkeit -> Nachkommastellen in kg
-  // 1000 g -> 0, 100 g -> 1, 10 g -> 2, 1 g -> 3 (clamp 0..3)
-  if      (genauigkeit_g >= 1000) return 0;
-  else if (genauigkeit_g >= 100)  return 1;
-  else if (genauigkeit_g >= 10)   return 2;
-  else                            return 3; // 1 g oder feiner
-}

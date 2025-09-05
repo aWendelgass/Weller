@@ -160,26 +160,18 @@ void UI::splash(const char* version){
   delay(1200);
 }
 
-String UI::formatKgComma(float kg, uint8_t decimals){
-  char buf[24];
-  dtostrf(kg, 0, decimals, buf);
-  String s(buf);
-  s.replace('.', ',');
-  return s;
-}
-
-void UI::drawWeightValue(float kg, int16_t x, int16_t baselineY){
+void UI::drawWeightValue(int gramm, int16_t x, int16_t baselineY){
   _u8g2.setFont(u8g2_font_logisoso16_tn);
   _u8g2.setCursor(x, baselineY);
-  _u8g2.print(formatKgComma(kg, 2));
-  _u8g2.setFont(u8g2_font_6x13_tf); _u8g2.print(F(" kg"));
+  _u8g2.print(gramm);
+  _u8g2.setFont(u8g2_font_6x13_tf); _u8g2.print(F(" g"));
 }
 
 void UI::drawLivePage(float weight, bool isCalibrated, bool isWifiConnected, int rssi) {
     if (!_oledAvailable) return;
     _display.clearDisplay();
     _u8g2.setFont(u8g2_font_6x13_tf); _u8g2.setCursor(0,12); _u8g2.print(isCalibrated ? F("Waage OK") : F("NICHT KAL."));
-    drawWeightValue(weight, 0, 36);
+    drawWeightValue((int)round(weight), 0, 36);
     if (isWifiConnected) {
         String rssiStr = "RSSI: " + String(rssi) + " dBm";
         _u8g2.setFont(u8g2_font_6x13_tf); _u8g2.setCursor(0,62); _u8g2.print(rssiStr);
