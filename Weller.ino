@@ -37,7 +37,7 @@ ConfigStruc config = {
 #define key_kolbengewicht         "ioronG"
 
 ExtraStruc extraParams[] = {  // Reiehnfolge der Typen: keyName[16] | FormType | TEXTvalue[64] | FLOATvalue | BOOLvalue | LONGvalue | bool optional | bool inputParam
-  { key_Kalibirierungsgewicht, FLOAT, "", 0.41, false, -1, false, true },
+  { key_Kalibirierungsgewicht, LONG, "", 0.41, false, -1, false, true },
   { key_Kalibrierungsfaktor,   FLOAT, "", 1.0,  false, -1, false, false },
   { key_offset,                LONG,  "", -1.0, false, 0,  false, false },
   { key_kalibriert,            BOOL,  "", -1.0, false, -1, false, false },
@@ -50,7 +50,7 @@ const WebStruc webForm[] = {
   { TITLE, "Weller Controller", "" },
   { CONFIGBLOCK, "", "" },
   { BLANK, "", "" }, { SEPARATOR, "", "" }, { BLANK, "", "" },
-  { PARAMETER, "Kalibrierungsgewicht (kg)", key_Kalibirierungsgewicht },
+  { PARAMETER, "Kalibrierungsgewicht (g)", key_Kalibirierungsgewicht },
   { PARAMETER, "Lötkolbengewicht [g]",      key_kolbengewicht },
   { PARAMETER, "Kalibrierungsfaktor",       key_Kalibrierungsfaktor },
   { PARAMETER, "Waagen-Offset",             key_offset },
