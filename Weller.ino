@@ -1,4 +1,8 @@
-constexpr const char* VERSION = "Version 0.20g";
+constexpr const char* VERSION = "Version 0.30";
+
+// Changelog:
+//    V0.30: Neues Konfigurationselement: Lötkolbengewicht eingeführt 46g Default
+
 
 #include <Arduino.h>
 #include "Waage.h"
@@ -24,18 +28,21 @@ ConfigStruc config = {
   "Weller Controller", "","","WellerESP","",1883,"","",false
 };
 
+// Keys: die nichtflüchtigen Parameter werden unter diesen Keys in den Preferences (NVM) gespeichert
 #define key_Kalibirierungsgewicht "calWeight"
-#define key_Kalibirierungfaktor   "calFactor"
+#define key_Kalibrierungsfaktor   "calFactor"
 #define key_offset                "offset"
 #define key_kalibriert            "calibrated"
 #define key_akkusticalarm         "alarm"
+#define key_kolbengewicht         "ioronG"
 
-ExtraStruc extraParams[] = {
+ExtraStruc extraParams[] = {  // Reiehnfolge der Typen: keyName[16] | FormType | TEXTvalue[64] | FLOATvalue | BOOLvalue | LONGvalue | bool optional | bool inputParam
   { key_Kalibirierungsgewicht, FLOAT, "", 0.41, false, -1, false, true },
-  { key_Kalibirierungfaktor,   FLOAT, "", 1.0,  false, -1, false, false },
+  { key_Kalibrierungsfaktor,   FLOAT, "", 1.0,  false, -1, false, false },
   { key_offset,                LONG,  "", -1.0, false, 0,  false, false },
   { key_kalibriert,            BOOL,  "", -1.0, false, -1, false, false },
-  { key_akkusticalarm,         BOOL,  "", -1.0, false, -1, false, true }
+  { key_akkusticalarm,         BOOL,  "", -1.0, false, -1, false, true },
+  { key_kolbengewicht,         LONG,  "", -1.0, false, 46, false, true }
 };
 constexpr size_t ANZ_EXTRA_PARAMS = sizeof(extraParams) / sizeof(extraParams[0]);
 
@@ -44,7 +51,8 @@ const WebStruc webForm[] = {
   { CONFIGBLOCK, "", "" },
   { BLANK, "", "" }, { SEPARATOR, "", "" }, { BLANK, "", "" },
   { PARAMETER, "Kalibrierungsgewicht (kg)", key_Kalibirierungsgewicht },
-  { PARAMETER, "Kalibrierungsfaktor",       key_Kalibirierungfaktor },
+  { PARAMETER, "Lötkolbengewicht [g]",      key_kolbengewicht },
+  { PARAMETER, "Kalibrierungsfaktor",       key_Kalibrierungsfaktor },
   { PARAMETER, "Waagen-Offset",             key_offset },
   { PARAMETER, "Waage kalibriert",          key_kalibriert },
   { BLANK, "", "" },
@@ -156,11 +164,11 @@ void setup() {
     ui.begin(VERSION);
 
     KalibrierungsDaten kd{};
-    kd.kalibrierungsfaktor = configManager.getExtraParamFloat(key_Kalibirierungfaktor);
+    kd.kalibrierungsfaktor = configManager.getExtraParamFloat(key_Kalibrierungsfaktor);
     kd.tareOffset          = configManager.getExtraParamInt(key_offset);
     kd.istKalibriert       = configManager.getExtraParamBool(key_kalibriert);
     meineWaage.begin(kd);
-    meineWaage.tare();
+    //meineWaage.tare(); 
     meineWaage.setAnzeigeGenauigkeitGramm(100);
 }
 
@@ -274,7 +282,7 @@ void loop() {
                 meineWaage.setKalibrierungsfaktor(newCalFactor);
                 meineWaage.setIstKalibriert(true);
                 
-                setExtraFloat(key_Kalibirierungfaktor, newCalFactor);
+                setExtraFloat(key_Kalibrierungsfaktor, newCalFactor);
                 setExtraLong(key_offset, meineWaage.getTareOffset());
                 setExtraBool(key_kalibriert, true);
                 configManager.saveConfig();
