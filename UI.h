@@ -11,6 +11,7 @@
 enum class ButtonPressType {
   NONE,
   SHORT,
+  DOUBLE_CLICK,
   LONG_2S,
   LONG_5S,
   LONG_10S
@@ -30,10 +31,14 @@ public:
   void displayActive(unsigned long operationTime, unsigned long standbyTime);
   void displayInactive(unsigned long standbyTime);
   void displayStandby(unsigned long standbyTime);
+  void displaySetupMain(int menuIndex);
+  void displaySetupStandbyTime(int newStandbyTime);
+  void displayWeighing(float weight);
   void drawTarePage();
   void drawCalibratePage();
   void drawInfoPage(long tareOffset, float calFactor, String ip, bool isMqttConnected);
   void drawResetPage();
+  void displayConfirmation(const char* message);
   void showMessage(const char* line1, const char* line2, int delayMs = 0);
   void showMessage(const char* line1, const char* line2, const char* line3, int delayMs=0);
   void clear();
@@ -58,6 +63,11 @@ private:
 
   bool _oledAvailable;
   uint8_t _oledAddr;
+  
+  // For double click detection
+  enum ClickState { IDLE, AWAITING_SECOND_CLICK };
+  ClickState _clickState;
+  unsigned long _click_timer;
 };
 
 #endif // UI_H
