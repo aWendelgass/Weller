@@ -160,24 +160,70 @@ void UI::splash(const char* version){
   delay(1200);
 }
 
-void UI::drawWeightValue(int gramm, int16_t x, int16_t baselineY){
-  _u8g2.setFont(u8g2_font_logisoso16_tn);
-  _u8g2.setCursor(x, baselineY);
-  _u8g2.print(gramm);
-  _u8g2.setFont(u8g2_font_6x13_tf); _u8g2.print(F(" g"));
+String UI::formatTime(unsigned long timeSeconds) {
+    char buf[6];
+    sprintf(buf, "%02lu:%02lu", (timeSeconds % 3600) / 60, timeSeconds % 60);
+    return String(buf);
 }
 
-void UI::drawLivePage(float weight, bool isCalibrated, bool isWifiConnected, int rssi) {
+void UI::displayReady(unsigned long standbyTime) {
     if (!_oledAvailable) return;
     _display.clearDisplay();
-    _u8g2.setFont(u8g2_font_6x13_tf); _u8g2.setCursor(0,12); _u8g2.print(isCalibrated ? F("Waage OK") : F("NICHT KAL."));
-    drawWeightValue((int)round(weight), 0, 36);
-    if (isWifiConnected) {
-        String rssiStr = "RSSI: " + String(rssi) + " dBm";
-        _u8g2.setFont(u8g2_font_6x13_tf); _u8g2.setCursor(0,62); _u8g2.print(rssiStr);
-    } else {
-        _u8g2.setFont(u8g2_font_6x13_tf); _u8g2.setCursor(0,62); _u8g2.print(F("WiFi nicht verbunden"));
-    }
+    _u8g2.setFont(u8g2_font_helvB18_tf);
+    _u8g2.setCursor(0, 24);
+    _u8g2.print(F("Ready 2 go"));
+    _u8g2.setFont(u8g2_font_6x13_tf);
+    _u8g2.setCursor(0, 52);
+    _u8g2.print("Standby in: " + formatTime(standbyTime));
+    _display.display();
+}
+
+void UI::displayActive(unsigned long operationTime, unsigned long standbyTime) {
+    if (!_oledAvailable) return;
+    _display.clearDisplay();
+    _u8g2.setFont(u8g2_font_helvB18_tf);
+    _u8g2.setCursor(0, 24);
+    _u8g2.print(F("Aktiv"));
+    _u8g2.setFont(u8g2_font_6x13_tf);
+    _u8g2.setCursor(0, 42);
+    _u8g2.print("Aktiv seit: " + formatTime(operationTime));
+    _u8g2.setCursor(0, 56);
+    _u8g2.print("Refresh in: " + formatTime(standbyTime));
+    _display.display();
+}
+
+void UI::displayInactive(unsigned long standbyTime) {
+    if (!_oledAvailable) return;
+    _display.clearDisplay();
+    _u8g2.setFont(u8g2_font_helvB18_tf);
+    _u8g2.setCursor(0, 24);
+    _u8g2.print(F("Standby in"));
+    _u8g2.setFont(u8g2_font_logisoso24_tn);
+    _u8g2.setCursor(0, 56);
+    _u8g2.print(formatTime(standbyTime));
+    _display.display();
+}
+
+void UI::displayStandby(unsigned long standbyTime) {
+    if (!_oledAvailable) return;
+    _display.clearDisplay();
+    _u8g2.setFont(u8g2_font_helvB18_tf);
+    _u8g2.setCursor(0, 24);
+    _u8g2.print(F("Standby"));
+    _u8g2.setFont(u8g2_font_6x13_tf);
+    _u8g2.setCursor(0, 52);
+    _u8g2.print("seit: " + formatTime(standbyTime));
+    _display.display();
+}
+
+void UI::drawInfoPage(long tareOffset, float calFactor, String ip, bool isMqttConnected) {
+    if (!_oledAvailable) return;
+    _display.clearDisplay();
+    _u8g2.setFont(u8g2_font_6x12_tf);
+    _u8g2.setCursor(0,20); _u8g2.print(F("CalF: "));  _u8g2.print(calFactor, 4);
+    _u8g2.setCursor(0,32); _u8g2.print(F("Offset: ")); _u8g2.print(tareOffset);
+    _u8g2.setCursor(0,44); _u8g2.print(F("IP: "));     _u8g2.print(ip);
+    _u8g2.setCursor(0,56); _u8g2.print(F("MQTT: "));   _u8g2.print(isMqttConnected ? F("verbunden") : F("NICHT"));
     _display.display();
 }
 
@@ -194,17 +240,6 @@ void UI::drawCalibratePage() {
     _display.clearDisplay();
     _u8g2.setFont(u8g2_font_6x13_tf); _u8g2.setCursor(0,28); _u8g2.print(F("< Kalibrieren"));
     _u8g2.setFont(u8g2_font_helvR14_tf); _u8g2.setCursor(0,52); _u8g2.print(F("5 s halten"));
-    _display.display();
-}
-
-void UI::drawInfoPage(long tareOffset, float calFactor, String ip, bool isMqttConnected) {
-    if (!_oledAvailable) return;
-    _display.clearDisplay();
-    _u8g2.setFont(u8g2_font_6x12_tf);
-    _u8g2.setCursor(0,20); _u8g2.print(F("CalF: "));  _u8g2.print(calFactor, 4);
-    _u8g2.setCursor(0,32); _u8g2.print(F("Offset: ")); _u8g2.print(tareOffset);
-    _u8g2.setCursor(0,44); _u8g2.print(F("IP: "));     _u8g2.print(ip);
-    _u8g2.setCursor(0,56); _u8g2.print(F("MQTT: "));   _u8g2.print(isMqttConnected ? F("verbunden") : F("NICHT"));
     _display.display();
 }
 
