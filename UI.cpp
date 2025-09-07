@@ -19,9 +19,7 @@ UI::UI(int buttonPin, int ledPin) :
   _display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1),
   _debouncer(),
   _oledAvailable(false),
-  _oledAddr(0x3C),
-  _clickState(IDLE),
-  _click_timer(0)
+  _oledAddr(0x3C)
 {
 }
 
@@ -90,37 +88,18 @@ void UI::clear() {
 }
 
 ButtonPressType UI::getButtonPress() {
-    // This implementation uses a small state machine to detect single and double clicks.
-    // It introduces a small latency for single clicks but is robust.
-    const int DOUBLE_CLICK_WINDOW_MS = 300;
-
-    // First, check for long presses on release, as they are unambiguous.
     if (_debouncer.rose()) {
         unsigned long duration = _debouncer.previousDuration();
-        if (duration >= 2000 && duration < 5000) return ButtonPressType::LONG_2S;
-        if (duration >= 5000 && duration < 10000) return ButtonPressType::LONG_5S;
-        if (duration >= 10000) return ButtonPressType::LONG_10S;
-    }
-
-    // Next, handle the click state machine based on the press edge.
-    if (_debouncer.fell()) {
-        if (_clickState == IDLE) {
-            _clickState = AWAITING_SECOND_CLICK;
-            _click_timer = millis();
-        } else if (_clickState == AWAITING_SECOND_CLICK) {
-            if (millis() - _click_timer < DOUBLE_CLICK_WINDOW_MS) {
-                _clickState = IDLE;
-                return ButtonPressType::DOUBLE_CLICK;
-            }
+        if (duration < 500) {
+            return ButtonPressType::SHORT;
+        } else if (duration >= 1000 && duration < 5000) {  //AW Mher als 1 Sekund ist lang
+            return ButtonPressType::LONG_1_5S;
+        } else if (duration >= 5000 && duration < 10000) {
+            return ButtonPressType::LONG_5S;
+        } else if (duration >= 10000) {
+            return ButtonPressType::LONG_10S;
         }
     }
-    
-    // Finally, if the time window for a double click has passed, register a single click.
-    if (_clickState == AWAITING_SECOND_CLICK && millis() - _click_timer > DOUBLE_CLICK_WINDOW_MS) {
-        _clickState = IDLE;
-        return ButtonPressType::SHORT;
-    }
-
     return ButtonPressType::NONE;
 }
 
@@ -174,7 +153,7 @@ void UI::initOLED(const char* version) {
 void UI::splash(const char* version){
   if(!_oledAvailable) return;
   _display.clearDisplay();
-  _u8g2.setFont(u8g2_font_7x14B_tf); _u8g2.setCursor(0,18); _u8g2.print(F("Weller Kontroller"));
+  _u8g2.setFont(u8g2_font_7x14B_tf); _u8g2.setCursor(0,18); _u8g2.print(F("Weller Controller"));
   _u8g2.setFont(u8g2_font_6x13_tf);  _u8g2.setCursor(0,38); _u8g2.print(F("Smart Standby"));
   _u8g2.setCursor(0,58); _u8g2.print(version);
   _display.display();
@@ -192,7 +171,7 @@ void UI::displayReady(unsigned long standbyTime) {
     _display.clearDisplay();
     _u8g2.setFont(u8g2_font_helvB18_tf);
     _u8g2.setCursor(0, 24);
-    _u8g2.print(F("Ready 2 go"));
+    _u8g2.print(F("Bereit"));
     _u8g2.setFont(u8g2_font_6x13_tf);
     _u8g2.setCursor(0, 52);
     _u8g2.print("Standby in: " + formatTime(standbyTime));
@@ -237,58 +216,39 @@ void UI::displayStandby(unsigned long standbyTime) {
     _display.display();
 }
 
-void UI::drawInfoPage(long tareOffset, float calFactor, String ip, bool isMqttConnected) {
-    if (!_oledAvailable) return;
-    _display.clearDisplay();
-    _u8g2.setFont(u8g2_font_6x12_tf);
-    _u8g2.setCursor(0,20); _u8g2.print(F("CalF: "));  _u8g2.print(calFactor, 4);
-    _u8g2.setCursor(0,32); _u8g2.print(F("Offset: ")); _u8g2.print(tareOffset);
-    _u8g2.setCursor(0,44); _u8g2.print(F("IP: "));     _u8g2.print(ip);
-    _u8g2.setCursor(0,56); _u8g2.print(F("MQTT: "));   _u8g2.print(isMqttConnected ? F("verbunden") : F("NICHT"));
-    _display.display();
-}
-
 void UI::displaySetupMain(int menuIndex) {
     if (!_oledAvailable) return;
-    const char* items[] = {"Weller Standby Time", "Tara", "Kalibrierung", "Info", "Waage", "Werkseinstellung", "Exit"};
+    const char* items[] = {"Standby Time", "Tara", "Kalibrierung", "Info", "Waage", "Werkseinstellung", "Exit"};
     const int numItems = sizeof(items) / sizeof(items[0]);
-    const int displayItems = 4; // Max items to show at once
+    const int displayItems = 4;
 
     _display.clearDisplay();
     _u8g2.setFont(u8g2_font_helvB12_tf);
     _u8g2.setCursor(0, 14);
     _u8g2.print(F("Setup"));
     
-    _u8g2.setFont(u8g2_font_6x13_tf);
+    _u8g2.setFont(u8g2_font_7x14_tf);
 
     int start = 0;
     if (menuIndex >= displayItems) {
-        start = menuIndex - displayItems + 1;
+        start = menuIndex - (displayItems - 1);
     }
+    if (start > numItems - displayItems) {
+        start = numItems - displayItems;
+    }
+
 
     for (int i = 0; i < displayItems; i++) {
         int currentItemIndex = start + i;
         if (currentItemIndex >= numItems) break;
 
-        int y = 30 + i * 10;
+        int y = 28 + i * 12;
         if (currentItemIndex == menuIndex) {
-            // Use background color to create a highlight bar
-            _u8g2.setFontMode(0); // Opaque font mode
-            _u8g2.setBackgroundColor(WHITE);
-            _u8g2.setForegroundColor(BLACK);
-            _u8g2.setCursor(2, y);
-            // A small hack to draw a full bar by printing spaces
-            _u8g2.print("                    "); 
-            _u8g2.setCursor(2, y);
-            _u8g2.print(items[currentItemIndex]);
-            // Reset to default
-            _u8g2.setFontMode(1); // Transparent
-            _u8g2.setBackgroundColor(BLACK);
-            _u8g2.setForegroundColor(WHITE);
-        } else {
-            _u8g2.setCursor(2, y);
-            _u8g2.print(items[currentItemIndex]);
+            _u8g2.setCursor(0, y);
+            _u8g2.print(">");
         }
+        _u8g2.setCursor(8, y);
+        _u8g2.print(items[currentItemIndex]);
     }
     _display.display();
 }
@@ -314,7 +274,7 @@ void UI::displaySetupStandbyTime(int newStandbyTime) {
     _u8g2.print(F("Weller Standby"));
 
     char buf[20];
-    sprintf(buf, "> %d < Minuten", newStandbyTime);
+    sprintf(buf, "%d Minuten", newStandbyTime);
     _u8g2.setFont(u8g2_font_helvR14_tf);
     _u8g2.setCursor(0, 52);
     _u8g2.print(buf);
@@ -339,26 +299,55 @@ void UI::displayWeighing(float weight) {
     _display.display();
 }
 
+void UI::drawInfoPage(long tareOffset, float calFactor, String ip, bool isMqttConnected) {
+    if (!_oledAvailable) return;
+    _display.clearDisplay();
+    _u8g2.setFont(u8g2_font_6x12_tf);
+    _u8g2.setCursor(0,20); _u8g2.print(F("CalF: "));  _u8g2.print(calFactor, 4);
+    _u8g2.setCursor(0,32); _u8g2.print(F("Offset: ")); _u8g2.print(tareOffset);
+    _u8g2.setCursor(0,44); _u8g2.print(F("IP: "));     _u8g2.print(ip);
+    _u8g2.setCursor(0,56); _u8g2.print(F("MQTT: "));   _u8g2.print(isMqttConnected ? F("verbunden") : F("NICHT"));
+    _display.display();
+}
+
 void UI::drawTarePage() {
     if (!_oledAvailable) return;
     _display.clearDisplay();
-    _u8g2.setFont(u8g2_font_6x13_tf); _u8g2.setCursor(0,28); _u8g2.print(F("> Tare"));
-    _u8g2.setFont(u8g2_font_helvR14_tf); _u8g2.setCursor(0,52); _u8g2.print(F("2 s halten"));
+    _u8g2.setFont(u8g2_font_6x13_tf);
+    _u8g2.setCursor(0, 28);
+    _u8g2.print(F("Tare ausfuehren?"));
+    _u8g2.setFont(u8g2_font_helvR14_tf);
+    _u8g2.setCursor(0,52);
+    _u8g2.print(F("2s halten"));
     _display.display();
 }
 
 void UI::drawCalibratePage() {
     if (!_oledAvailable) return;
     _display.clearDisplay();
-    _u8g2.setFont(u8g2_font_6x13_tf); _u8g2.setCursor(0,28); _u8g2.print(F("< Kalibrieren"));
-    _u8g2.setFont(u8g2_font_helvR14_tf); _u8g2.setCursor(0,52); _u8g2.print(F("5 s halten"));
+    _u8g2.setFont(u8g2_font_6x13_tf);
+    _u8g2.setCursor(0, 28);
+    _u8g2.print(F("Kalibrierung?"));
+    _u8g2.setFont(u8g2_font_helvR14_tf);
+    _u8g2.setCursor(0,52);
+    _u8g2.print(F("2s halten"));
+    _u8g2.setCursor(0,62);
+    _u8g2.print(F("Canel -> kurz"));
     _display.display();
 }
 
 void UI::drawResetPage() {
     if (!_oledAvailable) return;
     _display.clearDisplay();
-    _u8g2.setFont(u8g2_font_6x13_tf); _u8g2.setCursor(0,28); _u8g2.print(F("NVS löschen"));
-    _u8g2.setFont(u8g2_font_helvR14_tf); _u8g2.setCursor(0,52); _u8g2.print(F("10 s halten"));
+    _u8g2.setFont(u8g2_font_helvR14_tf);
+    _u8g2.setCursor(0,25);
+    _u8g2.print(F("D E L E T E ?"));
+
+    _u8g2.setFont(u8g2_font_6x13_tf);
+    _u8g2.setCursor(0,43);
+    _u8g2.print(F("2 Sek. --> DELETE!"));
+    _u8g2.setCursor(0,58);
+    _u8g2.print(F("Kurz   --> Abbruch"));
+
     _display.display();
 }

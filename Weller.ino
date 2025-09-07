@@ -1,5 +1,4 @@
-constexpr const char* VERSION = "Version 0.42a";
-
+constexpr const char* VERSION = "Version 0.52f";
 
 // Changelog:
 //    V0.30:    Neues Konfigurationselement: Lötkolbengewicht eingeführt 46g Default
@@ -10,9 +9,13 @@ constexpr const char* VERSION = "Version 0.42a";
 //    V0.30f:   verbesserterRestart Prozess  
 //    V0.40     Die Waage Funktion verschnidet in den Hintergrund: Jetzt sind wir beim Weller Standby Controller :-)
 //    V0.41     Setup Mode eingeführt
-//    V0.41a   Zu testzwecken setup_standby_time_minutes auf 1 und seccuretime auf 0 gesetzt
+//    V0.41a    Zu testzwecken setup_standby_time_minutes auf 1 und seccuretime auf 0 gesetzt
 //    V0.42     Neue Scroll Menues
-//    V0.42a     Neue Scroll Menues
+//    V0.42a    Neue Scroll Menues
+//    V0.50     FSM Redesign
+//    V0.51     FSM Redesign and new Button Dynamik
+//    V0.52     Editorische Änderungen in Menüs und StandbyZeit in Web Form a-f editorisch
+
 
 #include <Arduino.h>
 #include "Waage.h"
@@ -35,121 +38,78 @@ const int RELAY_PIN  = 16;
 // ------------------------------
 // WifiConfigManager – Strukturen
 // ------------------------------
-ConfigStruc config = {
-  "Weller Controller", "","","WellerESP","",1883,"","",false
-};
-
-// Keys: die nichtflüchtigen Parameter werden unter diesen Keys in den Preferences (NVM) gespeichert
+ConfigStruc config = { "Weller Controller", "","","WellerESP","",1883,"","",false };
 #define key_Kalibirierungsgewicht "calWeight"
 #define key_Kalibrierungsfaktor   "calFactor"
 #define key_offset                "offset"
 #define key_kalibriert            "calibrated"
 #define key_akkusticalarm         "alarm"
 #define key_kolbengewicht         "ioronG"
+#define key_standbyzeit           "standby"
 
-ExtraStruc extraParams[] = {  // Reiehnfolge der Typen: keyName[16] | FormType | TEXTvalue[64] | FLOATvalue | BOOLvalue | LONGvalue | bool optional | bool inputParam
+ExtraStruc extraParams[] = {
   { key_Kalibirierungsgewicht, LONG, "", -1.0, false, 410, false, true },
   { key_Kalibrierungsfaktor,   FLOAT, "", 1.0,  false, -1, false, false },
   { key_offset,                LONG,  "", -1.0, false, 0,  false, false },
   { key_kalibriert,            BOOL,  "", -1.0, false, -1, false, false },
   { key_akkusticalarm,         BOOL,  "", -1.0, false, -1, false, true },
-  { key_kolbengewicht,         LONG,  "", -1.0, false, 46, false, true }
+  { key_kolbengewicht,         LONG,  "", -1.0, false, 46, false, true },
+  { key_standbyzeit,           LONG,  "", -1.0, false, 1,  false, true }
 };
-constexpr size_t ANZ_EXTRA_PARAMS = sizeof(extraParams) / sizeof(extraParams[0]);
 
+constexpr size_t ANZ_EXTRA_PARAMS = sizeof(extraParams) / sizeof(extraParams[0]);
 const WebStruc webForm[] = {
-  { TITLE, "Weller Controller", "" },
-  { CONFIGBLOCK, "", "" },
-  { BLANK, "", "" }, { SEPARATOR, "", "" }, { BLANK, "", "" },
-  { PARAMETER, "Kalibrierungsgewicht [g]", key_Kalibirierungsgewicht },
+  { TITLE, "Weller Controller", "" }, { CONFIGBLOCK, "", "" }, { BLANK, "", "" }, { SEPARATOR, "", "" }, { BLANK, "", "" },
+  { PARAMETER, "Kalibrierungsgewicht [g]", key_Kalibirierungsgewicht }, 
   { PARAMETER, "Lötkolbengewicht [g]",      key_kolbengewicht },
-  { PARAMETER, "Kalibrierungsfaktor",       key_Kalibrierungsfaktor },
+  { PARAMETER, "Weller Standby Zeit [min]", key_standbyzeit }, 
+  { PARAMETER, "Kalibrierungsfaktor",       key_Kalibrierungsfaktor }, 
   { PARAMETER, "Waagen-Offset",             key_offset },
-  { PARAMETER, "Waage kalibriert",          key_kalibriert },
-  { BLANK, "", "" },
-  { PARAMETER, "Akkustischer Alarm",        key_akkusticalarm },
+  { PARAMETER, "Waage kalibriert",          key_kalibriert }, 
+  { BLANK, "", "" }, 
+  { PARAMETER, "Akkustischer Alarm",        key_akkusticalarm }, 
   { BLANK, "", "" }
 };
+
 constexpr size_t ANZ_WEBFORM_ITEMS = sizeof(webForm) / sizeof(webForm[0]);
 
 UI ui(BUTTON_PIN, LED_PIN);
 WifiConfigManager configManager(&config, extraParams, webForm, ANZ_WEBFORM_ITEMS, ANZ_EXTRA_PARAMS, VERSION, &ui);
-
-// ------------------------------
-// Module instances
-// ------------------------------
 Waage meineWaage(HX711_DOUT, HX711_SCK);
 
-// ------------------------------
-// Finite State Machine (FSM)
-// ------------------------------
 enum class SystemState {
-    INIT,
-    READY,
-    ACTIVE,
-    INACTIVE,
-    STANDBY,
-    // Setup States
-    SETUP_MAIN,
-    SETUP_STANDBY_TIME,
-    MENU_TARE,
-    MENU_CALIBRATE,
-    MENU_INFO,
-    MENU_WIEGEN,
-    MENU_RESET,
-    CALIBRATION_CHECK_WEIGHT,
-    CALIBRATION_STEP_1_START,
-    CALIBRATION_STEP_2_EMPTY,
-    CALIBRATION_DONE,
-    MENU_RESET_CONFIRM
+    INIT, READY, ACTIVE, INACTIVE, STANDBY,
+    SETUP_MAIN, SETUP_STANDBY_TIME, MENU_TARE, MENU_CALIBRATE, MENU_INFO, 
+    MENU_WIEGEN, MENU_RESET, MENU_RESET_CONFIRM,
+    CALIBRATION_CHECK_WEIGHT, CALIBRATION_STEP_1_START, CALIBRATION_STEP_2_EMPTY, CALIBRATION_DONE
 };
-
 SystemState currentState = SystemState::INIT;
-
-#if WAAGE_DEBUG
 SystemState lastPublishedState = SystemState::INIT;
-#endif
 
-// FSM Timers and Constants
-long StationStandbyTime = 60; // seconds, now variable
-const long secureTime = 0; // seconds
+long StationStandbyTime = 60;
+const long secureTime = 0;
 unsigned long standbyTimer_start = 0;
 unsigned long operationTimer_start = 0;
 unsigned long standby_entered_timestamp = 0;
-unsigned long menuTimeoutStart = 0;
-const unsigned long MENU_TIMEOUT_MS    = 8000;
-int setup_standby_time_minutes = 5; // Temporary value for setup
 int setup_menu_index = 0;
+int setup_standby_time_minutes = 5;
+bool in_setup_hold_transition = false; // Flag to prevent re-entry
 
-// ------------------------------
-// Helpers
-// ------------------------------
+// --- Forward Declarations ---
+void handleOperationalMode(ButtonPressType press, float currentWeight, long weightThreshold);
+void handleSetupMode(ButtonPressType press, float currentWeight);
+void restartStation();
+void startStandbyTimer();
+
+// --- Action Functions & Helpers ---
+void restartStation() { digitalWrite(RELAY_PIN, HIGH); delay(100); digitalWrite(RELAY_PIN, LOW); }
+void startStandbyTimer() { standbyTimer_start = millis(); }
+void stopStandbyTimer() { standbyTimer_start = 0; }
+void startOperationTimer() { operationTimer_start = millis(); }
+void stopOperationTimer() { operationTimer_start = 0; }
 static void setExtraFloat(const char* key, float v){ for(size_t i=0; i<ANZ_EXTRA_PARAMS; i++){ if(strcmp(extraParams[i].keyName,key)==0){ extraParams[i].FLOATvalue=v; return; } } }
 static void setExtraLong (const char* key, long v) { for(size_t i=0; i<ANZ_EXTRA_PARAMS; i++){ if(strcmp(extraParams[i].keyName,key)==0){ extraParams[i].LONGvalue =v; return; } } }
 static void setExtraBool (const char* key, bool v) { for(size_t i=0; i<ANZ_EXTRA_PARAMS; i++){ if(strcmp(extraParams[i].keyName,key)==0){ extraParams[i].BOOLvalue =v; return; } } }
-
-// --- Action Functions ---
-void restartStation() {
-    digitalWrite(RELAY_PIN, HIGH);
-    delay(100);
-    digitalWrite(RELAY_PIN, LOW);
-}
-
-void startStandbyTimer() {
-    standbyTimer_start = millis();
-}
-
-void stopStandbyTimer() {
-    standbyTimer_start = 0;
-}
-
-void startOperationTimer() {
-    operationTimer_start = millis();
-}
-
-void stopOperationTimer() {
-    operationTimer_start = 0;
-}
 
 static void factoryResetAndReboot(){
   Preferences p;
@@ -170,11 +130,11 @@ static String getBaseTopic() {
 #if WAAGE_DEBUG
 const char* systemStateToString(SystemState state) {
     switch (state) {
-        case SystemState::INIT:     return "INIT";
-        case SystemState::READY:    return "READY";
-        case SystemState::ACTIVE:   return "ACTIVE";
+        case SystemState::INIT: return "INIT";
+        case SystemState::READY: return "READY";
+        case SystemState::ACTIVE: return "ACTIVE";
         case SystemState::INACTIVE: return "INACTIVE";
-        case SystemState::STANDBY:  return "STANDBY";
+        case SystemState::STANDBY: return "STANDBY";
         case SystemState::SETUP_MAIN: return "SETUP_MAIN";
         case SystemState::SETUP_STANDBY_TIME: return "SETUP_STANDBY_TIME";
         case SystemState::MENU_TARE: return "MENU_TARE";
@@ -182,6 +142,7 @@ const char* systemStateToString(SystemState state) {
         case SystemState::MENU_INFO: return "MENU_INFO";
         case SystemState::MENU_WIEGEN: return "MENU_WIEGEN";
         case SystemState::MENU_RESET: return "MENU_RESET";
+        case SystemState::MENU_RESET_CONFIRM: return "MENU_RESET_CONFIRM";
         case SystemState::CALIBRATION_CHECK_WEIGHT: return "CALIBRATION_CHECK_WEIGHT";
         case SystemState::CALIBRATION_STEP_1_START: return "CALIBRATION_STEP_1_START";
         case SystemState::CALIBRATION_STEP_2_EMPTY: return "CALIBRATION_STEP_2_EMPTY";
@@ -191,126 +152,88 @@ const char* systemStateToString(SystemState state) {
 }
 #endif
 
-
-// ------------------------------
-// MQTT
-// ------------------------------
 static void mqttPublishLoop() {
     static unsigned long lastMqttPub = 0;
     if (millis() - lastMqttPub < 5000) return;
     lastMqttPub = millis();
-
-    if (!configManager.isWifiConnected()) return;
-    configManager.ensureMqttConnected();
-    if (!configManager.isMqttConnected()) return;
-
+    if (!configManager.isWifiConnected() || !configManager.ensureMqttConnected()) return;
     String base = getBaseTopic();
-    char buf[16];
-    dtostrf(meineWaage.getGewicht(), 0, 0, buf);
-    configManager.publish((base + F("/gewicht_g")).c_str(), String(buf), true, 0);
+    char weight_buf[16];
+    dtostrf(meineWaage.getGewicht(), 0, 0, weight_buf);
+    configManager.publish((base + F("/gewicht_g")).c_str(), String(weight_buf), true, 0);
     configManager.publish((base + F("/calibrated")).c_str(), meineWaage.istKalibriert() ? "1" : "0", true, 0);
     configManager.publish((base + F("/rssi")).c_str(), String(configManager.getRSSI()), true, 0);
+    if (currentState != lastPublishedState) {
+        char json_payload[128];
+        snprintf(json_payload, sizeof(json_payload), "{\"id\":%d, \"state\":\"%s\"}", static_cast<int>(currentState), systemStateToString(currentState));
+        configManager.publish((base + F("/fsm_state")).c_str(), json_payload, true, 0);
+        lastPublishedState = currentState;
+    }
 }
 
-// ------------------------------
-// Setup
-// ------------------------------
 void setup() {
     Serial.begin(115200);
     delay(300);
     Serial.println(VERSION);
-
     configManager.begin("SmartScale");
     ui.begin(VERSION);
-    
     pinMode(RELAY_PIN, OUTPUT);
-    digitalWrite(RELAY_PIN, LOW); // Relay is NC, LOW means station is ON
-
+    digitalWrite(RELAY_PIN, LOW);
     KalibrierungsDaten kd{};
     kd.kalibrierungsfaktor = configManager.getExtraParamFloat(key_Kalibrierungsfaktor);
     kd.tareOffset          = configManager.getExtraParamInt(key_offset);
     kd.istKalibriert       = configManager.getExtraParamBool(key_kalibriert);
+    
+    //AW01
+    StationStandbyTime = configManager.getExtraParamInt(key_standbyzeit) * 60;
+    
     meineWaage.begin(kd);
     meineWaage.tare(); 
 }
 
-// ------------------------------
-// Loop - FSM Implementation
-// ------------------------------
 void loop() {
-    // --- Continuous updates ---
     configManager.handleLoop();
     meineWaage.loop();
     mqttPublishLoop();
     ui.handleUpdates(configManager.isWifiConnected());
 
-    // --- Get button press ---
     ButtonPressType press = ui.getButtonPress();
-
-    // --- Get sensor data ---
     float currentWeight = meineWaage.getGewicht();
     long ironWeight = configManager.getExtraParamInt(key_kolbengewicht);
-    long weightThreshold = ironWeight / 2;
 
-    // --- FSM State Handling ---
-    unsigned long now = millis();
+
+
+
+    long weightThreshold = ironWeight > 0 ? (ironWeight / 2) : 20;
+
+    bool isOperationalState = (currentState == SystemState::READY || currentState == SystemState::ACTIVE || currentState == SystemState::INACTIVE || currentState == SystemState::STANDBY || currentState == SystemState::INIT);
     
-    bool isOperationalState = (currentState == SystemState::READY || currentState == SystemState::ACTIVE || currentState == SystemState::INACTIVE || currentState == SystemState::STANDBY);
-    bool isMenuState = !isOperationalState;
-
-    // --- Handle Button Presses and Holds ---
-    // This logic is complex because holds can trigger immediate state changes.
     if (ui.isHeld()) {
+        if (in_setup_hold_transition) return;
         unsigned long holdDuration = ui.getHoldDuration();
         if (isOperationalState && holdDuration > 5000) {
             stopOperationTimer();
             stopStandbyTimer();
             setup_menu_index = 0;
             currentState = SystemState::SETUP_MAIN;
-            menuTimeoutStart = now;
-        } else if (currentState == SystemState::SETUP_STANDBY_TIME && holdDuration > 5000) {
-            StationStandbyTime = setup_standby_time_minutes * 60;
-            currentState = SystemState::SETUP_MAIN;
-            menuTimeoutStart = now;
+            in_setup_hold_transition = true;
         }
-    }
-
-    if (press == ButtonPressType::LONG_2S && isMenuState) {
-        if (currentState == SystemState::SETUP_MAIN) {
-            switch (setup_menu_index) {
-                case 0: currentState = SystemState::SETUP_STANDBY_TIME; setup_standby_time_minutes = StationStandbyTime / 60; break;
-                case 1: currentState = SystemState::MENU_TARE; break;
-                case 2: currentState = SystemState::MENU_CALIBRATE; break;
-                case 3: currentState = SystemState::MENU_INFO; break;
-                case 4: currentState = SystemState::MENU_WIEGEN; break;
-                case 5: currentState = SystemState::MENU_RESET; break;
-                case 6: restartStation(); startStandbyTimer(); currentState = SystemState::READY; break; // Exit
-            }
-            menuTimeoutStart = now;
-        } else if (currentState == SystemState::MENU_TARE) {
-             meineWaage.tare();
-             ui.showMessage("Tare", "erfolgreich", 1000);
-             currentState = SystemState::READY;
-        } else if (currentState == SystemState::MENU_CALIBRATE) {
-             currentState = SystemState::CALIBRATION_CHECK_WEIGHT;
-        } else if (currentState == SystemState::MENU_RESET) {
-            currentState = SystemState::MENU_RESET_CONFIRM;
-            menuTimeoutStart = now;
-        } else if (currentState == SystemState::MENU_RESET_CONFIRM) {
-            factoryResetAndReboot();
-        }
+    } else {
+        in_setup_hold_transition = false;
     }
     
-    // --- Inactivity Timeout for Setup Mode ---
-    if (isMenuState && currentState != SystemState::CALIBRATION_STEP_1_START && currentState != SystemState::CALIBRATION_STEP_2_EMPTY && (now - menuTimeoutStart > MENU_TIMEOUT_MS)) {
-        restartStation();
-        startStandbyTimer();
-        currentState = SystemState::READY;
+    if (isOperationalState) {
+        handleOperationalMode(press, currentWeight, weightThreshold);
+    } else {
+        handleSetupMode(press, currentWeight);
     }
+}
 
-    // --- Operational Mode Timer Logic ---
-    unsigned long standbyTimeLeft = (standbyTimer_start > 0) ? ((StationStandbyTime - secureTime) - (now - standbyTimer_start) / 1000) : 0;
-    if (isOperationalState && standbyTimer_start > 0 && (now - standbyTimer_start > (StationStandbyTime - secureTime) * 1000)) {
+void handleOperationalMode(ButtonPressType press, float currentWeight, long weightThreshold) {
+    unsigned long now = millis();
+    unsigned long standbyTimeLeft = (standbyTimer_start > 0) ? ((StationStandbyTime - secureTime) * 1000 - (now - standbyTimer_start)) / 1000 : 0;
+    
+    if (standbyTimer_start > 0 && (now - standbyTimer_start > (StationStandbyTime - secureTime) * 1000)) {
         if (currentState == SystemState::READY || currentState == SystemState::INACTIVE) {
             stopStandbyTimer();
             standby_entered_timestamp = now;
@@ -321,13 +244,11 @@ void loop() {
         }
     }
 
-    // --- Main State Switch ---
     switch (currentState) {
         case SystemState::INIT:
             startStandbyTimer();
             currentState = SystemState::READY;
             break;
-
         case SystemState::READY:
             ui.displayReady(standbyTimeLeft);
             if (currentWeight < -weightThreshold) {
@@ -337,18 +258,13 @@ void loop() {
                 currentState = SystemState::ACTIVE;
             }
             break;
-
         case SystemState::ACTIVE:
-            {
-                unsigned long operationTime = (operationTimer_start > 0) ? (now - operationTimer_start) / 1000 : 0;
-                ui.displayActive(operationTime, standbyTimeLeft);
-            }
+            ui.displayActive((operationTimer_start > 0) ? (now - operationTimer_start) / 1000 : 0, standbyTimeLeft);
             if (currentWeight > -weightThreshold) {
                 stopOperationTimer();
                 currentState = SystemState::INACTIVE;
             }
             break;
-
         case SystemState::INACTIVE:
             ui.displayInactive(standbyTimeLeft);
             if (currentWeight < -weightThreshold) {
@@ -358,12 +274,8 @@ void loop() {
                 currentState = SystemState::ACTIVE;
             }
             break;
-
         case SystemState::STANDBY:
-            {
-                unsigned long standbyTime = (standby_entered_timestamp > 0) ? (now - standby_entered_timestamp) / 1000 : 0;
-                ui.displayStandby(standbyTime);
-            }
+            ui.displayStandby((standby_entered_timestamp > 0) ? (now - standby_entered_timestamp) / 1000 : 0);
             if (press == ButtonPressType::SHORT) {
                 startStandbyTimer();
                 currentState = SystemState::READY;
@@ -375,73 +287,94 @@ void loop() {
                 currentState = SystemState::ACTIVE;
             }
             break;
+        default: break;
+    }
+}
 
-        // --- Setup Mode States ---
+void handleSetupMode(ButtonPressType press, float currentWeight) {
+    if (press == ButtonPressType::LONG_1_5S) {
+        switch (currentState) {
+            case SystemState::SETUP_MAIN:
+                switch (setup_menu_index) {
+                    case 0: currentState = SystemState::SETUP_STANDBY_TIME; setup_standby_time_minutes = StationStandbyTime / 60; break;
+                    case 1: currentState = SystemState::MENU_TARE; break;
+                    case 2: currentState = SystemState::MENU_CALIBRATE; break;
+                    case 3: currentState = SystemState::MENU_INFO; break;
+                    case 4: currentState = SystemState::MENU_WIEGEN; break;
+                    case 5: currentState = SystemState::MENU_RESET; break;
+                    case 6: restartStation(); startStandbyTimer(); currentState = SystemState::READY; break;
+                }
+                break;
+            case SystemState::SETUP_STANDBY_TIME:
+                StationStandbyTime = setup_standby_time_minutes * 60;
+                currentState = SystemState::SETUP_MAIN;
+                break;
+            case SystemState::MENU_TARE:
+                 meineWaage.tare();
+                 ui.showMessage("Tare", "erfolgreich", 1000);
+                 currentState = SystemState::READY;
+                 break;
+            case SystemState::MENU_CALIBRATE:
+                 currentState = SystemState::CALIBRATION_CHECK_WEIGHT;
+                 break;
+            case SystemState::MENU_RESET:
+                currentState = SystemState::MENU_RESET_CONFIRM;
+                break;
+            case SystemState::MENU_RESET_CONFIRM:
+                factoryResetAndReboot();
+                break;
+            default: break;
+        }
+    }
+
+        switch (currentState) {
         case SystemState::SETUP_MAIN:
             ui.displaySetupMain(setup_menu_index);
             if (press == ButtonPressType::SHORT) {
-                setup_menu_index = (setup_menu_index + 1) % 7; // 7 items: 0-6
-                menuTimeoutStart = now;
+                setup_menu_index = (setup_menu_index + 1) % 7;
             }
             break;
-
         case SystemState::SETUP_STANDBY_TIME:
             ui.displaySetupStandbyTime(setup_standby_time_minutes);
             if (press == ButtonPressType::SHORT) {
                 setup_standby_time_minutes++;
-                if (setup_standby_time_minutes > 99) setup_standby_time_minutes = 1;
-                menuTimeoutStart = now;
-            } else if (press == ButtonPressType::DOUBLE_CLICK) {
-                setup_standby_time_minutes = 1;
-                menuTimeoutStart = now;
+                if (setup_standby_time_minutes > 15) setup_standby_time_minutes = 1;
             }
             break;
-
         case SystemState::MENU_WIEGEN:
             ui.displayWeighing(currentWeight);
-            if (press == ButtonPressType::SHORT) { currentState = SystemState::SETUP_MAIN; menuTimeoutStart = now; }
+            if (press == ButtonPressType::SHORT) { currentState = SystemState::SETUP_MAIN; }
             break;
-
         case SystemState::MENU_TARE:
             ui.drawTarePage();
-            if (press == ButtonPressType::SHORT) { currentState = SystemState::SETUP_MAIN; menuTimeoutStart = now; }
+            if (press == ButtonPressType::SHORT) { currentState = SystemState::SETUP_MAIN; }
             break;
-
         case SystemState::MENU_CALIBRATE:
             ui.drawCalibratePage();
-            if (press == ButtonPressType::SHORT) { currentState = SystemState::SETUP_MAIN; menuTimeoutStart = now; }
+            if (press == ButtonPressType::SHORT) { currentState = SystemState::SETUP_MAIN; }
             break;
-
         case SystemState::MENU_INFO:
             ui.drawInfoPage(meineWaage.getTareOffset(), meineWaage.getKalibrierungsfaktor(), WiFi.localIP().toString(), configManager.isMqttConnected());
-            if (press == ButtonPressType::SHORT) { currentState = SystemState::SETUP_MAIN; menuTimeoutStart = now; }
+            if (press == ButtonPressType::SHORT) { currentState = SystemState::SETUP_MAIN; }
             break;
-
         case SystemState::MENU_RESET:
             ui.drawResetPage();
-            if (press == ButtonPressType::SHORT) { currentState = SystemState::SETUP_MAIN; menuTimeoutStart = now; }
+            if (press == ButtonPressType::SHORT) { currentState = SystemState::SETUP_MAIN; }
             break;
-
         case SystemState::MENU_RESET_CONFIRM:
             ui.displayConfirmation("Sicher?");
              if (press == ButtonPressType::SHORT) {
                 currentState = SystemState::SETUP_MAIN;
-                menuTimeoutStart = now;
             }
             break;
-            
         case SystemState::CALIBRATION_CHECK_WEIGHT:
-            {
-                long calW_g = configManager.getExtraParamInt(key_Kalibirierungsgewicht);
-                if (calW_g <= 0) {
-                    ui.showMessage("Kal.-Gew. fehlt", "im Webformular", 2000);
-                    currentState = SystemState::READY;
-                } else {
-                    currentState = SystemState::CALIBRATION_STEP_1_START;
-                }
+            if (configManager.getExtraParamInt(key_Kalibirierungsgewicht) <= 0) {
+                ui.showMessage("Kal.-Gew. fehlt", "im Webformular", 2000);
+                currentState = SystemState::READY;
+            } else {
+                currentState = SystemState::CALIBRATION_STEP_1_START;
             }
             break;
-
         case SystemState::CALIBRATION_STEP_1_START:
             ui.showMessage("Kalibrierung..", "Platte leeren ","Dann Taste druecken!");
             if (press == ButtonPressType::SHORT) {
@@ -449,7 +382,6 @@ void loop() {
                 currentState = SystemState::CALIBRATION_STEP_2_EMPTY;
             }
             break;
-
         case SystemState::CALIBRATION_STEP_2_EMPTY:
             {
                 char line2[32];
@@ -461,37 +393,19 @@ void loop() {
                     float newCalFactor = meineWaage.getNewCalibration(calW_g);
                     meineWaage.setKalibrierungsfaktor(newCalFactor);
                     meineWaage.setIstKalibriert(true);
-                    
                     setExtraFloat(key_Kalibrierungsfaktor, newCalFactor);
                     setExtraLong(key_offset, meineWaage.getTareOffset());
                     setExtraBool(key_kalibriert, true);
                     configManager.saveConfig();
-                    
                     currentState = SystemState::CALIBRATION_DONE;
                 }
             }
             break;
-
         case SystemState::CALIBRATION_DONE:
             ui.showMessage("Kalibrierung", "erfolgreich", 1200);
             meineWaage.tare();
             currentState = SystemState::READY;
             break;
+        default: break;
     }
-
-    #if WAAGE_DEBUG
-    if (currentState != lastPublishedState) {
-        if (configManager.isWifiConnected()) {
-            configManager.ensureMqttConnected();
-            if (configManager.isMqttConnected()) {
-                char json_payload[128];
-                snprintf(json_payload, sizeof(json_payload), "{\"id\":%d, \"state\":\"%s\"}", static_cast<int>(currentState), systemStateToString(currentState));
-                String topic = getBaseTopic() + F("/fsm_state");
-                configManager.publish(topic.c_str(), json_payload, true, 0);
-                Serial.printf("Published FSM state: %s\n", json_payload);
-            }
-        }
-        lastPublishedState = currentState;
-    }
-    #endif
 }
