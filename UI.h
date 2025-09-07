@@ -26,11 +26,18 @@ public:
   unsigned long getHoldDuration();
 
   // Drawing methods
-  void drawLivePage(float weight, bool isCalibrated, bool isWifiConnected, int rssi);
+  void displayReady(unsigned long standbyTime);
+  void displayActive(unsigned long operationTime, unsigned long standbyTime);
+  void displayInactive(unsigned long standbyTime);
+  void displayStandby(unsigned long standbyTime);
+  void displaySetupMain(int menuIndex);
+  void displaySetupStandbyTime(int newStandbyTime);
+  void displayWeighing(float weight);
   void drawTarePage();
   void drawCalibratePage();
   void drawInfoPage(long tareOffset, float calFactor, String ip, bool isMqttConnected);
   void drawResetPage();
+  void displayConfirmation(const char* message);
   void showMessage(const char* line1, const char* line2, int delayMs = 0);
   void showMessage(const char* line1, const char* line2, const char* line3, int delayMs=0);
   void clear();
@@ -44,8 +51,7 @@ public:
 private:
   void initOLED(const char* version);
   void splash(const char* version);
-  String formatKgComma(float kg, uint8_t decimals);
-  void drawWeightValue(float kg, int16_t x, int16_t baselineY);
+  String formatTime(unsigned long timeSeconds);
 
   int _buttonPin;
   int _ledPin;

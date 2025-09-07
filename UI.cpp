@@ -160,48 +160,138 @@ void UI::splash(const char* version){
   delay(1200);
 }
 
-String UI::formatKgComma(float kg, uint8_t decimals){
-  char buf[24];
-  dtostrf(kg, 0, decimals, buf);
-  String s(buf);
-  s.replace('.', ',');
-  return s;
+String UI::formatTime(unsigned long timeSeconds) {
+    char buf[6];
+    sprintf(buf, "%02lu:%02lu", (timeSeconds % 3600) / 60, timeSeconds % 60);
+    return String(buf);
 }
 
-void UI::drawWeightValue(float kg, int16_t x, int16_t baselineY){
-  _u8g2.setFont(u8g2_font_logisoso16_tn);
-  _u8g2.setCursor(x, baselineY);
-  _u8g2.print(formatKgComma(kg, 2));
-  _u8g2.setFont(u8g2_font_6x13_tf); _u8g2.print(F(" kg"));
-}
-
-void UI::drawLivePage(float weight, bool isCalibrated, bool isWifiConnected, int rssi) {
+void UI::displayReady(unsigned long standbyTime) {
     if (!_oledAvailable) return;
     _display.clearDisplay();
-    _u8g2.setFont(u8g2_font_6x13_tf); _u8g2.setCursor(0,12); _u8g2.print(isCalibrated ? F("Waage OK") : F("NICHT KAL."));
-    drawWeightValue(weight, 0, 36);
-    if (isWifiConnected) {
-        String rssiStr = "RSSI: " + String(rssi) + " dBm";
-        _u8g2.setFont(u8g2_font_6x13_tf); _u8g2.setCursor(0,62); _u8g2.print(rssiStr);
-    } else {
-        _u8g2.setFont(u8g2_font_6x13_tf); _u8g2.setCursor(0,62); _u8g2.print(F("WiFi nicht verbunden"));
+    _u8g2.setFont(u8g2_font_helvB18_tf);
+    _u8g2.setCursor(0, 24);
+    _u8g2.print(F("Ready 2 go"));
+    _u8g2.setFont(u8g2_font_6x13_tf);
+    _u8g2.setCursor(0, 52);
+    _u8g2.print("Standby in: " + formatTime(standbyTime));
+    _display.display();
+}
+
+void UI::displayActive(unsigned long operationTime, unsigned long standbyTime) {
+    if (!_oledAvailable) return;
+    _display.clearDisplay();
+    _u8g2.setFont(u8g2_font_helvB18_tf);
+    _u8g2.setCursor(0, 24);
+    _u8g2.print(F("Aktiv"));
+    _u8g2.setFont(u8g2_font_6x13_tf);
+    _u8g2.setCursor(0, 42);
+    _u8g2.print("Aktiv seit: " + formatTime(operationTime));
+    _u8g2.setCursor(0, 56);
+    _u8g2.print("Refresh in: " + formatTime(standbyTime));
+    _display.display();
+}
+
+void UI::displayInactive(unsigned long standbyTime) {
+    if (!_oledAvailable) return;
+    _display.clearDisplay();
+    _u8g2.setFont(u8g2_font_helvB18_tf);
+    _u8g2.setCursor(0, 24);
+    _u8g2.print(F("Standby in"));
+    _u8g2.setFont(u8g2_font_logisoso24_tn);
+    _u8g2.setCursor(0, 56);
+    _u8g2.print(formatTime(standbyTime));
+    _display.display();
+}
+
+void UI::displayStandby(unsigned long standbyTime) {
+    if (!_oledAvailable) return;
+    _display.clearDisplay();
+    _u8g2.setFont(u8g2_font_helvB18_tf);
+    _u8g2.setCursor(0, 24);
+    _u8g2.print(F("Standby"));
+    _u8g2.setFont(u8g2_font_6x13_tf);
+    _u8g2.setCursor(0, 52);
+    _u8g2.print("seit: " + formatTime(standbyTime));
+    _display.display();
+}
+
+void UI::displaySetupMain(int menuIndex) {
+    if (!_oledAvailable) return;
+    const char* items[] = {"Weller Standby Time", "Tara", "Kalibrierung", "Info", "Waage", "Werkseinstellung", "Exit"};
+    const int numItems = sizeof(items) / sizeof(items[0]);
+    const int displayItems = 4;
+
+    _display.clearDisplay();
+    _u8g2.setFont(u8g2_font_helvB12_tf);
+    _u8g2.setCursor(0, 14);
+    _u8g2.print(F("Setup"));
+
+    _u8g2.setFont(u8g2_font_7x14_tf);
+
+    int start = 0;
+    if (menuIndex >= displayItems) {
+        start = menuIndex - displayItems + 1;
+    }
+
+    for (int i = 0; i < displayItems; i++) {
+        int currentItemIndex = start + i;
+        if (currentItemIndex >= numItems) break;
+
+        int y = 28 + i * 12;
+        if (currentItemIndex == menuIndex) {
+            _u8g2.setCursor(0, y);
+            _u8g2.print(">");
+        }
+        _u8g2.setCursor(8, y);
+        _u8g2.print(items[currentItemIndex]);
     }
     _display.display();
 }
 
-void UI::drawTarePage() {
+void UI::displayConfirmation(const char* message) {
     if (!_oledAvailable) return;
     _display.clearDisplay();
-    _u8g2.setFont(u8g2_font_6x13_tf); _u8g2.setCursor(0,28); _u8g2.print(F("> Tare"));
-    _u8g2.setFont(u8g2_font_helvR14_tf); _u8g2.setCursor(0,52); _u8g2.print(F("2 s halten"));
+    _u8g2.setFont(u8g2_font_helvB12_tf);
+    _u8g2.setCursor(0, 24);
+    _u8g2.print(message);
+
+    _u8g2.setFont(u8g2_font_6x13_tf);
+    _u8g2.setCursor(0, 52);
+    _u8g2.print(F("2s halten: Ja"));
     _display.display();
 }
 
-void UI::drawCalibratePage() {
+void UI::displaySetupStandbyTime(int newStandbyTime) {
     if (!_oledAvailable) return;
     _display.clearDisplay();
-    _u8g2.setFont(u8g2_font_6x13_tf); _u8g2.setCursor(0,28); _u8g2.print(F("< Kalibrieren"));
-    _u8g2.setFont(u8g2_font_helvR14_tf); _u8g2.setCursor(0,52); _u8g2.print(F("5 s halten"));
+    _u8g2.setFont(u8g2_font_helvB18_tf);
+    _u8g2.setCursor(0, 24);
+    _u8g2.print(F("Weller Standby"));
+
+    char buf[20];
+    sprintf(buf, "%d Minuten", newStandbyTime);
+    _u8g2.setFont(u8g2_font_helvR14_tf);
+    _u8g2.setCursor(0, 52);
+    _u8g2.print(buf);
+
+    _display.display();
+}
+
+void UI::displayWeighing(float weight) {
+    if (!_oledAvailable) return;
+    _display.clearDisplay();
+    _u8g2.setFont(u8g2_font_6x13_tf);
+    _u8g2.setCursor(0, 12);
+    _u8g2.print("Gewicht");
+
+    char buf[16];
+    dtostrf(weight, 0, 0, buf);
+    _u8g2.setFont(u8g2_font_logisoso24_tn);
+    _u8g2.setCursor(0, 48);
+    _u8g2.print(buf);
+    _u8g2.print(" g");
+
     _display.display();
 }
 
@@ -216,10 +306,38 @@ void UI::drawInfoPage(long tareOffset, float calFactor, String ip, bool isMqttCo
     _display.display();
 }
 
+void UI::drawTarePage() {
+    if (!_oledAvailable) return;
+    _display.clearDisplay();
+    _u8g2.setFont(u8g2_font_6x13_tf);
+    _u8g2.setCursor(0, 28);
+    _u8g2.print(F("Tare ausfuehren?"));
+    _u8g2.setFont(u8g2_font_helvR14_tf);
+    _u8g2.setCursor(0,52);
+    _u8g2.print(F("2s halten"));
+    _display.display();
+}
+
+void UI::drawCalibratePage() {
+    if (!_oledAvailable) return;
+    _display.clearDisplay();
+    _u8g2.setFont(u8g2_font_6x13_tf);
+    _u8g2.setCursor(0, 28);
+    _u8g2.print(F("Kalibrierung?"));
+    _u8g2.setFont(u8g2_font_helvR14_tf);
+    _u8g2.setCursor(0,52);
+    _u8g2.print(F("2s halten"));
+    _display.display();
+}
+
 void UI::drawResetPage() {
     if (!_oledAvailable) return;
     _display.clearDisplay();
-    _u8g2.setFont(u8g2_font_6x13_tf); _u8g2.setCursor(0,28); _u8g2.print(F("NVS löschen"));
-    _u8g2.setFont(u8g2_font_helvR14_tf); _u8g2.setCursor(0,52); _u8g2.print(F("10 s halten"));
+    _u8g2.setFont(u8g2_font_6x13_tf);
+    _u8g2.setCursor(0, 28);
+    _u8g2.print(F("NVS loeschen?"));
+    _u8g2.setFont(u8g2_font_helvR14_tf);
+    _u8g2.setCursor(0,52);
+    _u8g2.print(F("2s halten"));
     _display.display();
 }

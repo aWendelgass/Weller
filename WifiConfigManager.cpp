@@ -166,7 +166,11 @@ void WifiConfigManager::_startAP() {
         request->send(200, "text/html; charset=utf-8",
           "<h1>Konfiguration erfolgreich! Gerät wird neu gestartet.</h1>"
           "<script>setTimeout(function(){window.location.href='/'},3000);</script>");
-        delay(1500);
+
+        _server.end();
+        if (_ui) _ui->showMessage("Neustart.....", "", 0);
+        unsigned long startTime = millis();
+        while(millis() - startTime < 2000) { /* non-blocking delay */ }
         ESP.restart();
       }
     }
@@ -176,15 +180,16 @@ void WifiConfigManager::_startAP() {
   _server.on("/update", HTTP_POST, [this](AsyncWebServerRequest *request) {
     bool shouldReboot = !Update.hasError();
     if (_ui) {
-        if(shouldReboot) _ui->showMessage("Update OK", "Neustart...", 1000);
+        if(shouldReboot) _ui->showMessage("Update OK", "Neustart.....", 2000);
         else _ui->showMessage("Update fehlgeschlagen", "", 2000);
     }
     AsyncWebServerResponse *response = request->beginResponse(200, "text/plain", shouldReboot ? "OK" : "FAIL");
     response->addHeader("Connection", "close");
     request->send(response);
     if (shouldReboot) {
-        if (_ui) _ui->clear();
-        delay(1000);
+        _server.end();
+        unsigned long startTime = millis();
+        while(millis() - startTime < 2000) { /* non-blocking delay */ }
         ESP.restart();
     }
   }, [this](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
@@ -269,7 +274,10 @@ void WifiConfigManager::_connectToWiFi() {
           request->send(200, "text/html; charset=utf-8",
             "<h1>Konfiguration erfolgreich! Gerät wird neu gestartet.</h1>"
             "<script>setTimeout(function(){window.location.href='/'},3000);</script>");
-          delay(1500);
+          _server.end();
+          if (_ui) _ui->showMessage("Neustart.....", "", 0);
+          unsigned long startTime = millis();
+          while(millis() - startTime < 2000) { /* non-blocking delay */ }
           ESP.restart();
         }
       }
@@ -279,15 +287,16 @@ void WifiConfigManager::_connectToWiFi() {
     _server.on("/update", HTTP_POST, [this](AsyncWebServerRequest *request) {
         bool shouldReboot = !Update.hasError();
         if (_ui) {
-            if(shouldReboot) _ui->showMessage("Update OK", "Neustart...", 1000);
+            if(shouldReboot) _ui->showMessage("Update OK", "Neustart.....", 2000);
             else _ui->showMessage("Update fehlgeschlagen", "", 2000);
         }
         AsyncWebServerResponse *response = request->beginResponse(200, "text/plain", shouldReboot ? "OK" : "FAIL");
         response->addHeader("Connection", "close");
         request->send(response);
         if (shouldReboot) {
-            if (_ui) _ui->clear();
-            delay(1000);
+            _server.end();
+            unsigned long startTime = millis();
+            while(millis() - startTime < 2000) { /* non-blocking delay */ }
             ESP.restart();
         }
     }, [this](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
@@ -469,6 +478,9 @@ bool WifiConfigManager::_validateForm(AsyncWebServerRequest* request) {
     Serial.println("An dieser Stelle wird in _validateForm der NVS gelöscht :-(");
     _prefsNetwork.begin  (PREFS_NAMESPACE_NETWORK,   false); _prefsNetwork.clear(); _prefsNetwork.end();
     _prefsOperation.begin(PREFS_NAMESPACE_OPERATION, false); _prefsOperation.clear(); _prefsOperation.end();
+    if (_ui) _ui->showMessage("Neustart.....", "", 0);
+    unsigned long startTime = millis();
+    while(millis() - startTime < 2000) { /* non-blocking delay */ }
     ESP.restart();
     return false;
   }
