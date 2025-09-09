@@ -1,4 +1,4 @@
-constexpr const char* VERSION = "Version 0.70alpha5";
+constexpr const char* VERSION = "Version 0.80beta1";
 
 // Changelog:
 //    V0.30:    Neues Konfigurationselement: Lötkolbengewicht eingeführt 46g Default
@@ -25,6 +25,7 @@ constexpr const char* VERSION = "Version 0.70alpha5";
 //    V0.70alpha3  Kein Display mehr aus WifiConfogManager, UI Abhängigkeiten dort entfernt
 //    V0.70alpha4  Redircect to Config Page in WCM
 //    V0.70alpha5  Redircect to Config Page in WCM by meta refresh
+//    V0.80beta1   Komplettabschaltung der Lötstation eingebaut
 
 
 #include <Arduino.h>
@@ -62,6 +63,7 @@ ConfigStruc config = { "Weller Controller", "","","WellerESP","",1883,"","",fals
 #define key_akkusticalarm         "alarm"
 #define key_kolbengewicht         "ioronG"
 #define key_standbyzeit           "standby"
+#define key_switchofftime         "switchofftime" 
 
 ExtraStruc extraParams[] = {
   { key_Kalibirierungsgewicht, LONG, "", -1.0, false, 410, false, true },
@@ -70,7 +72,8 @@ ExtraStruc extraParams[] = {
   { key_kalibriert,            BOOL,  "", -1.0, false, -1, false, false },
   { key_akkusticalarm,         BOOL,  "", -1.0, false, -1, false, true },
   { key_kolbengewicht,         LONG,  "", -1.0, false, 46, false, true },
-  { key_standbyzeit,           LONG,  "", -1.0, false, 1,  false, true }
+  { key_standbyzeit,           LONG,  "", -1.0, false, 1,  false, true },
+  { key_switchofftime,         LONG,  "", -1.0, false, 60, false, true }
 };
 
 constexpr size_t ANZ_EXTRA_PARAMS = sizeof(extraParams) / sizeof(extraParams[0]);
@@ -79,6 +82,7 @@ const WebStruc webForm[] = {
   { PARAMETER, "Kalibrierungsgewicht [g]", key_Kalibirierungsgewicht }, 
   { PARAMETER, "Lötkolbengewicht [g]",      key_kolbengewicht },
   { PARAMETER, "Weller Standby Zeit [min]", key_standbyzeit }, 
+  { PARAMETER, "Weller Auschalt Zeit [min]",key_switchofftime }, 
   { PARAMETER, "Kalibrierungsfaktor",       key_Kalibrierungsfaktor }, 
   { PARAMETER, "Waagen-Offset",             key_offset },
   { PARAMETER, "Waage kalibriert",          key_kalibriert }, 
