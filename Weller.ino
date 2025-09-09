@@ -1,4 +1,4 @@
-constexpr const char* VERSION = "Version 0.70alpa2";
+constexpr const char* VERSION = "Version 0.70alpha5";
 
 // Changelog:
 //    V0.30:    Neues Konfigurationselement: Lötkolbengewicht eingeführt 46g Default
@@ -22,6 +22,9 @@ constexpr const char* VERSION = "Version 0.70alpa2";
 //    V0.70alpha  WiFi connection optional and add AP mode fallback, 
 //    V0.70alpha1  State Logik für REady korrigiert, Beim Verlassen von Setup,Tara.... immer in inactive Mode und RestartStatuin 
 //    V0.70alpha2  Korrektur: Beim Verlassen von Setup,Tara.... immer in inactive Mode und RestartStatuin 
+//    V0.70alpha3  Kein Display mehr aus WifiConfogManager, UI Abhängigkeiten dort entfernt
+//    V0.70alpha4  Redircect to Config Page in WCM
+//    V0.70alpha5  Redircect to Config Page in WCM by meta refresh
 
 
 #include <Arduino.h>
@@ -87,7 +90,7 @@ const WebStruc webForm[] = {
 constexpr size_t ANZ_WEBFORM_ITEMS = sizeof(webForm) / sizeof(webForm[0]);
 
 UI ui(BUTTON_PIN, LED_PIN);
-WifiConfigManager configManager(&config, extraParams, webForm, ANZ_WEBFORM_ITEMS, ANZ_EXTRA_PARAMS, VERSION, &ui);
+WifiConfigManager configManager(&config, extraParams, webForm, ANZ_WEBFORM_ITEMS, ANZ_EXTRA_PARAMS, VERSION);
 Waage meineWaage(HX711_DOUT, HX711_SCK);
 
 enum class SystemState {

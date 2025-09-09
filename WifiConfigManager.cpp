@@ -1,5 +1,4 @@
 #include "WifiConfigManager.h"
-#include "UI.h"
 #include <PubSubClient.h>
 
 // Preferences Namespaces
@@ -11,11 +10,10 @@ WifiConfigManager::WifiConfigManager(ConfigStruc* config,
                                      const WebStruc* webForm,
                                      int webFormCount,
                                      int anzExtraparams,
-                                     const char* firmwareVersion,
-                                     UI* ui)
+                                     const char* firmwareVersion)
 : _server(80), _mqttClient(_wifiClient), _config(config), _extraParams(extraParams),
   _webForm(webForm), _webFormCount(webFormCount), _anzExtraparams(anzExtraparams),
-  _firmwareVersion(firmwareVersion), _ui(ui), _wifiState(WiFiState::STA_CONNECTING) {}
+  _firmwareVersion(firmwareVersion), _wifiState(WiFiState::STA_CONNECTING) {}
 
 WifiConfigManager::~WifiConfigManager() {}
 
@@ -173,14 +171,7 @@ void WifiConfigManager::startAP() {
       if (_validateForm(request)) {
         saveConfig();
         request->send(200, "text/html; charset=utf-8",
-          "<h1>Konfiguration erfolgreich! Gerät wird neu gestartet.</h1>"
-          "<script>setTimeout(function(){window.location.href='/'},3000);</script>");
-        
-        _server.end();
-        if (_ui) _ui->showMessage("Neustart.....", "", 0);
-        unsigned long startTime = millis();
-        while(millis() - startTime < 2000) { /* non-blocking delay */ }
-        ESP.restart();
+          "<h1>Konfiguration erfolgreich gespeichert!</h1><p>Bitte starten Sie das Gerät jetzt manuell neu, um die Änderungen zu übernehmen.</p><script>setTimeout(function(){window.location.href='/'},3000);</script>");
       }
     }
   );
@@ -188,26 +179,17 @@ void WifiConfigManager::startAP() {
   // OTA Update Handler
   _server.on("/update", HTTP_POST, [this](AsyncWebServerRequest *request) {
     bool shouldReboot = !Update.hasError();
-    if (_ui) {
-        if(shouldReboot) _ui->showMessage("Update OK", "Neustart.....", 2000);
-        else _ui->showMessage("Update fehlgeschlagen", "", 2000);
-    }
     AsyncWebServerResponse *response = request->beginResponse(200, "text/plain", shouldReboot ? "OK" : "FAIL");
     response->addHeader("Connection", "close");
     request->send(response);
-    if (shouldReboot) {
-        _server.end();
-        unsigned long startTime = millis();
-        while(millis() - startTime < 2000) { /* non-blocking delay */ }
-        ESP.restart();
-    }
+    // User is now responsible for rebooting. Automatic restart is removed.
   }, [this](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
     if (index == 0) {
-      if (_ui) _ui->showMessage("OTA Update", "Empfange Daten...", 0);
+      // UI messages are removed.
       Serial.printf("Update Start: %s\n", filename.c_str());
       if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
         Update.printError(Serial);
-        if (_ui) _ui->showMessage("Update Fehler", "Nicht genug Speicher?", 2000);
+        // UI messages are removed.
       }
     }
     if (!Update.hasError()) {
@@ -283,13 +265,8 @@ void WifiConfigManager::_connectToWiFi() {
         if (_validateForm(request)) {
           saveConfig();
           request->send(200, "text/html; charset=utf-8",
-            "<h1>Konfiguration erfolgreich! Gerät wird neu gestartet.</h1>"
-            "<script>setTimeout(function(){window.location.href='/'},3000);</script>");
-          _server.end();
-          if (_ui) _ui->showMessage("Neustart.....", "", 0);
-          unsigned long startTime = millis();
-          while(millis() - startTime < 2000) { /* non-blocking delay */ }
-          ESP.restart();
+            "<h1>Konfiguration erfolgreich gespeichert!</h1><p>Bitte starten Sie das Gerät jetzt manuell neu, um die Änderungen zu übernehmen.</p><script>setTimeout(function(){window.location.href='/'},3000);</script>");
+            
         }
       }
     );
@@ -297,26 +274,18 @@ void WifiConfigManager::_connectToWiFi() {
     // OTA Update Handler
     _server.on("/update", HTTP_POST, [this](AsyncWebServerRequest *request) {
         bool shouldReboot = !Update.hasError();
-        if (_ui) {
-            if(shouldReboot) _ui->showMessage("Update OK", "Neustart.....", 2000);
-            else _ui->showMessage("Update fehlgeschlagen", "", 2000);
-        }
+        // UI messages are removed.
         AsyncWebServerResponse *response = request->beginResponse(200, "text/plain", shouldReboot ? "OK" : "FAIL");
         response->addHeader("Connection", "close");
         request->send(response);
-        if (shouldReboot) {
-            _server.end();
-            unsigned long startTime = millis();
-            while(millis() - startTime < 2000) { /* non-blocking delay */ }
-            ESP.restart();
-        }
+        // User is now responsible for rebooting. Automatic restart is removed.
     }, [this](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
         if (index == 0) {
-            if (_ui) _ui->showMessage("OTA Update", "Empfange Daten...", 0);
+            // UI messages are removed.
             Serial.printf("Update Start: %s\n", filename.c_str());
             if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
                 Update.printError(Serial);
-                if (_ui) _ui->showMessage("Update Fehler", "Nicht genug Speicher?", 2000);
+                // UI messages are removed.
             }
         }
         if (!Update.hasError()) {
@@ -470,8 +439,8 @@ String WifiConfigManager::_getHtmlForm() {
   html += "  xhr.upload.addEventListener('progress', function(e){";
   html += "    if (e.lengthComputable) { prg.value = (e.loaded / e.total) * 100; }";
   html += "  });";
-  html += "  xhr.onload = function(e) { alert('Update erfolgreich! Gerät wird neu gestartet.'); window.location.href = '/'; };";
-  html += "  xhr.onerror = function(e) { alert('Update fehlgeschlagen!'); };";
+  html += "  xhr.onload = function(e) { alert('Update erfolgreich! Bitte starten Sie das Gerät jetzt manuell neu.'); };";
+  html += "  xhr.onerror = function(e) { alert('Update fehlgeschlagen! Bitte versuchen Sie es erneut.'); };";
   html += "  xhr.send(formData);";
   html += "});";
   html += "</script>";
@@ -485,14 +454,19 @@ String WifiConfigManager::_getHtmlForm() {
 
 bool WifiConfigManager::_validateForm(AsyncWebServerRequest* request) {
   if (request->hasArg("reset_config")) {
-    Serial.println("An dieser Stelle wird in _validateForm der NVS gelöscht :-(");
-    _prefsNetwork.begin  (PREFS_NAMESPACE_NETWORK,   false); _prefsNetwork.clear(); _prefsNetwork.end();
-    _prefsOperation.begin(PREFS_NAMESPACE_OPERATION, false); _prefsOperation.clear(); _prefsOperation.end();
-    if (_ui) _ui->showMessage("Neustart.....", "", 0);
-    unsigned long startTime = millis();
-    while(millis() - startTime < 2000) { /* non-blocking delay */ }
-    ESP.restart();
-    return false;
+    Serial.println("Benutzer hat das Löschen der Konfiguration angefordert. NVS wird gelöscht.");
+    _prefsNetwork.begin(PREFS_NAMESPACE_NETWORK, false);
+    _prefsNetwork.clear();
+    _prefsNetwork.end();
+    _prefsOperation.begin(PREFS_NAMESPACE_OPERATION, false);
+    _prefsOperation.clear();
+    _prefsOperation.end();
+    
+    request->send(200, "text/html; charset=utf-8",
+      "<h1>Werkseinstellungen wiederhergestellt!</h1>"
+      "<p>Bitte starten Sie das Gerät jetzt manuell neu.</p><script>setTimeout(function(){window.location.href='/'},3000);</script>");
+      
+    return false; // Verhindert die weitere Verarbeitung des Formulars
   }
 
   String errorList;
