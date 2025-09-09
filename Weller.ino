@@ -1,4 +1,4 @@
-constexpr const char* VERSION = "Version 0.70alpa";
+constexpr const char* VERSION = "Version 0.70alpa2";
 
 // Changelog:
 //    V0.30:    Neues Konfigurationselement: Lötkolbengewicht eingeführt 46g Default
@@ -20,6 +20,9 @@ constexpr const char* VERSION = "Version 0.70alpa";
 //    V0.60c    Integer Underflow Crash fixed
 //    V0.60d    Change Initial State to INACTIVE,INACTIVE->ACTIVE Transition ohne zwangs StationNeustart
 //    V0.70alpha  WiFi connection optional and add AP mode fallback, 
+//    V0.70alpha1  State Logik für REady korrigiert, Beim Verlassen von Setup,Tara.... immer in inactive Mode und RestartStatuin 
+//    V0.70alpha2  Korrektur: Beim Verlassen von Setup,Tara.... immer in inactive Mode und RestartStatuin 
+
 
 #include <Arduino.h>
 #include "Waage.h"
@@ -295,7 +298,7 @@ void handleOperationalMode(ButtonPressType press, float currentWeight, long weig
         case SystemState::READY:
             ui.displayReady(standbyTimeLeft);
             if (currentWeight < -weightThreshold) {
-                restartStation();
+                // No restart needed, station is already pre-heated
                 startStandbyTimer();
                 startOperationTimer();
                 currentState = SystemState::ACTIVE;
@@ -318,6 +321,7 @@ void handleOperationalMode(ButtonPressType press, float currentWeight, long weig
         case SystemState::STANDBY:
             ui.displayStandby((standby_entered_timestamp > 0) ? (now - standby_entered_timestamp) / 1000 : 0);
             if (press == ButtonPressType::SHORT) {
+                restartStation(); // Pre-heat the station
                 startStandbyTimer();
                 currentState = SystemState::READY;
             }
@@ -358,9 +362,9 @@ void handleSetupMode(ButtonPressType press, float currentWeight) {
                             setExtraLong(key_standbyzeit, setup_standby_time_minutes);
                             configManager.saveConfig();
                         }
-                        restartStation(); 
-                        startStandbyTimer(); 
-                        currentState = SystemState::READY; 
+                        restartStation();
+                        startStandbyTimer(); // Restore timer restart on exit
+                        currentState = SystemState::INACTIVE;
                         break;
                 }
                 break;
@@ -370,7 +374,7 @@ void handleSetupMode(ButtonPressType press, float currentWeight) {
             case SystemState::MENU_TARE:
                  meineWaage.tare();
                  ui.showMessage("Tare", "erfolgreich", 1000);
-                 currentState = SystemState::READY;
+                 currentState = SystemState::INACTIVE;
                  break;
             case SystemState::MENU_CALIBRATE:
                  currentState = SystemState::CALIBRATION_CHECK_WEIGHT;
@@ -428,7 +432,7 @@ void handleSetupMode(ButtonPressType press, float currentWeight) {
         case SystemState::CALIBRATION_CHECK_WEIGHT:
             if (configManager.getExtraParamInt(key_Kalibirierungsgewicht) <= 0) {
                 ui.showMessage("Kal.-Gew. fehlt", "im Webformular", 2000);
-                currentState = SystemState::READY;
+                currentState = SystemState::INACTIVE;
             } else {
                 currentState = SystemState::CALIBRATION_STEP_1_START;
             }
@@ -462,7 +466,7 @@ void handleSetupMode(ButtonPressType press, float currentWeight) {
         case SystemState::CALIBRATION_DONE:
             ui.showMessage("Kalibrierung", "erfolgreich", 1200);
             meineWaage.tare();
-            currentState = SystemState::READY;
+            currentState = SystemState::INACTIVE;
             break;
         default: break;
     }
