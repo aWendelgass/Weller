@@ -1,4 +1,4 @@
-constexpr const char* VERSION = "Version 0.52f";
+constexpr const char* VERSION = "Version 0.60d";
 
 // Changelog:
 //    V0.30:    Neues Konfigurationselement: Lötkolbengewicht eingeführt 46g Default
@@ -15,7 +15,10 @@ constexpr const char* VERSION = "Version 0.52f";
 //    V0.50     FSM Redesign
 //    V0.51     FSM Redesign and new Button Dynamik
 //    V0.52     Editorische Änderungen in Menüs und StandbyZeit in Web Form a-f editorisch
-
+//    V0.60a    Standby Time format hh:mm:ss, Save StandBY Time in NVP, Dim LED in Standby
+//    V0.60b    StantionREstart causewd Watchdog. Das wurde geändert
+//    V0.60c    Integer Underflow Crash fixed
+//    V0.60d    Change Initial State to INACTIVE,INACTIVE->ACTIVE Transition ohne zwangs StationNeustart
 
 #include <Arduino.h>
 #include "Waage.h"
@@ -25,6 +28,12 @@ constexpr const char* VERSION = "Version 0.52f";
 #include <WiFi.h>
 
 #define WAAGE_DEBUG 1
+
+// ------------------------------
+// Delays
+// ------------------------------
+const int STATION_RESTART_DELAY_MS = 2000;
+const int REBOOT_MESSAGE_DELAY_MS  = 2000;
 
 // ------------------------------
 // Pins
@@ -93,6 +102,7 @@ unsigned long operationTimer_start = 0;
 unsigned long standby_entered_timestamp = 0;
 int setup_menu_index = 0;
 int setup_standby_time_minutes = 5;
+int original_standby_time_minutes = 0;
 bool in_setup_hold_transition = false; // Flag to prevent re-entry
 
 // --- Forward Declarations ---
@@ -102,7 +112,14 @@ void restartStation();
 void startStandbyTimer();
 
 // --- Action Functions & Helpers ---
-void restartStation() { digitalWrite(RELAY_PIN, HIGH); delay(100); digitalWrite(RELAY_PIN, LOW); }
+void restartStation() { 
+    digitalWrite(RELAY_PIN, HIGH); 
+    unsigned long start = millis();
+    while(millis() - start < STATION_RESTART_DELAY_MS) {
+        delay(10); // Use small delays in a loop to feed the watchdog
+    }
+    digitalWrite(RELAY_PIN, LOW); 
+}
 void startStandbyTimer() { standbyTimer_start = millis(); }
 void stopStandbyTimer() { standbyTimer_start = 0; }
 void startOperationTimer() { operationTimer_start = millis(); }
@@ -117,7 +134,7 @@ static void factoryResetAndReboot(){
   p.begin("operation", false); p.clear(); p.end();
   ui.showMessage("Neustart.....", "", 0);
   unsigned long startTime = millis();
-  while(millis() - startTime < 2000) { /* non-blocking delay */ }
+  while(millis() - startTime < REBOOT_MESSAGE_DELAY_MS) { /* non-blocking delay - actually blocking */ }
   ESP.restart();
 }
 
@@ -195,6 +212,8 @@ void loop() {
     configManager.handleLoop();
     meineWaage.loop();
     mqttPublishLoop();
+    
+    ui.setStandby(currentState == SystemState::STANDBY);
     ui.handleUpdates(configManager.isWifiConnected());
 
     ButtonPressType press = ui.getButtonPress();
@@ -215,6 +234,8 @@ void loop() {
             stopOperationTimer();
             stopStandbyTimer();
             setup_menu_index = 0;
+            original_standby_time_minutes = StationStandbyTime / 60;
+            setup_standby_time_minutes = original_standby_time_minutes;
             currentState = SystemState::SETUP_MAIN;
             in_setup_hold_transition = true;
         }
@@ -231,8 +252,17 @@ void loop() {
 
 void handleOperationalMode(ButtonPressType press, float currentWeight, long weightThreshold) {
     unsigned long now = millis();
-    unsigned long standbyTimeLeft = (standbyTimer_start > 0) ? ((StationStandbyTime - secureTime) * 1000 - (now - standbyTimer_start)) / 1000 : 0;
     
+    unsigned long timeLeft_ms = 0;
+    if (standbyTimer_start > 0) {
+        unsigned long elapsed_ms = now - standbyTimer_start;
+        unsigned long total_ms = (StationStandbyTime - secureTime) * 1000;
+        if (elapsed_ms < total_ms) {
+            timeLeft_ms = total_ms - elapsed_ms;
+        }
+    }
+    unsigned long standbyTimeLeft = timeLeft_ms / 1000;
+
     if (standbyTimer_start > 0 && (now - standbyTimer_start > (StationStandbyTime - secureTime) * 1000)) {
         if (currentState == SystemState::READY || currentState == SystemState::INACTIVE) {
             stopStandbyTimer();
@@ -247,7 +277,7 @@ void handleOperationalMode(ButtonPressType press, float currentWeight, long weig
     switch (currentState) {
         case SystemState::INIT:
             startStandbyTimer();
-            currentState = SystemState::READY;
+            currentState = SystemState::INACTIVE;
             break;
         case SystemState::READY:
             ui.displayReady(standbyTimeLeft);
@@ -268,8 +298,6 @@ void handleOperationalMode(ButtonPressType press, float currentWeight, long weig
         case SystemState::INACTIVE:
             ui.displayInactive(standbyTimeLeft);
             if (currentWeight < -weightThreshold) {
-                restartStation();
-                startStandbyTimer();
                 startOperationTimer();
                 currentState = SystemState::ACTIVE;
             }
@@ -296,17 +324,25 @@ void handleSetupMode(ButtonPressType press, float currentWeight) {
         switch (currentState) {
             case SystemState::SETUP_MAIN:
                 switch (setup_menu_index) {
-                    case 0: currentState = SystemState::SETUP_STANDBY_TIME; setup_standby_time_minutes = StationStandbyTime / 60; break;
+                    case 0: currentState = SystemState::SETUP_STANDBY_TIME; break;
                     case 1: currentState = SystemState::MENU_TARE; break;
                     case 2: currentState = SystemState::MENU_CALIBRATE; break;
                     case 3: currentState = SystemState::MENU_INFO; break;
                     case 4: currentState = SystemState::MENU_WIEGEN; break;
                     case 5: currentState = SystemState::MENU_RESET; break;
-                    case 6: restartStation(); startStandbyTimer(); currentState = SystemState::READY; break;
+                    case 6: 
+                        if (setup_standby_time_minutes != original_standby_time_minutes) {
+                            StationStandbyTime = setup_standby_time_minutes * 60;
+                            setExtraLong(key_standbyzeit, setup_standby_time_minutes);
+                            configManager.saveConfig();
+                        }
+                        restartStation(); 
+                        startStandbyTimer(); 
+                        currentState = SystemState::READY; 
+                        break;
                 }
                 break;
             case SystemState::SETUP_STANDBY_TIME:
-                StationStandbyTime = setup_standby_time_minutes * 60;
                 currentState = SystemState::SETUP_MAIN;
                 break;
             case SystemState::MENU_TARE:

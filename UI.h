@@ -48,6 +48,7 @@ public:
   // LED methods
   void blinkLed(int count, int delayMs);
   void setLed(bool on);
+  void setStandby(bool standby);
 
 private:
   void initOLED(const char* version);
@@ -56,6 +57,8 @@ private:
 
   int _buttonPin;
   int _ledPin;
+  bool _in_standby = false;
+  bool _led_state = false;
 
   Adafruit_SSD1306 _display;
   U8G2_FOR_ADAFRUIT_GFX _u8g2;

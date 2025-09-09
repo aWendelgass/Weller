@@ -1,3 +1,4 @@
+#include <Arduino.h>
 #include "UI.h"
 #include <Wire.h>
 #include <WiFi.h> // For WiFi.localIP()
@@ -25,8 +26,10 @@ UI::UI(int buttonPin, int ledPin) :
 
 void UI::begin(const char* version) {
   pinMode(_buttonPin, INPUT_PULLUP);
-  pinMode(_ledPin, OUTPUT);
-  digitalWrite(_ledPin, HIGH); // Turn LED ON at boot
+  
+  // ESP32 Core 3.x LEDC API
+  ledcAttach(_ledPin, 5000, 8);
+  ledcWrite(_ledPin, 255); // Turn LED ON at boot
 
   _debouncer.attach(_buttonPin, INPUT_PULLUP);
   _debouncer.interval(DEBOUNCE_MS);
@@ -34,25 +37,36 @@ void UI::begin(const char* version) {
   initOLED(version);
 }
 
+void UI::setStandby(bool standby) {
+    if (_in_standby && !standby) { // Transitioning out of standby
+        _led_state = false; // Force LED to be set to HIGH on next update
+    }
+    _in_standby = standby;
+}
+
 void UI::handleUpdates(bool isWifiConnected) {
     _debouncer.update();
 
-    // LED Status Logic (can be expanded if needed)
+    if (_in_standby) {
+        ledcWrite(_ledPin, 5); // 2% brightness
+        return;
+    }
+
+    // LED Status Logic
     static unsigned long previousMillis = 0;
-    static bool ledState = LOW;
     const long interval = 500;
 
     if (isWifiConnected) {
-        if (ledState == LOW) {
-            digitalWrite(_ledPin, HIGH);
-            ledState = HIGH;
+        if (_led_state == false) {
+            ledcWrite(_ledPin, 255); // LED ON
+            _led_state = true;
         }
     } else {
         unsigned long currentMillis = millis();
         if (currentMillis - previousMillis >= interval) {
             previousMillis = currentMillis;
-            ledState = !ledState;
-            digitalWrite(_ledPin, ledState);
+            _led_state = !_led_state;
+            ledcWrite(_ledPin, _led_state ? 255 : 0); // Blink
         }
     }
 }
@@ -120,15 +134,15 @@ void UI::drawCheckmark() {
 
 void UI::blinkLed(int count, int delayMs) {
   for (int i = 0; i < count; ++i) {
-    digitalWrite(_ledPin, HIGH);
+    ledcWrite(_ledPin, 255);
     delay(delayMs);
-    digitalWrite(_ledPin, LOW);
+    ledcWrite(_ledPin, 0);
     delay(delayMs);
   }
 }
 
 void UI::setLed(bool on) {
-    digitalWrite(_ledPin, on ? HIGH : LOW);
+    ledcWrite(_ledPin, on ? 255 : 0);
 }
 
 static bool i2cPresent(uint8_t addr){ Wire.beginTransmission(addr); return (Wire.endTransmission()==0); }
@@ -161,9 +175,15 @@ void UI::splash(const char* version){
 }
 
 String UI::formatTime(unsigned long timeSeconds) {
-    char buf[6];
-    sprintf(buf, "%02lu:%02lu", (timeSeconds % 3600) / 60, timeSeconds % 60);
-    return String(buf);
+    if (timeSeconds >= 3600) {
+        char buf[9]; // hh:mm:ss\0
+        sprintf(buf, "%02lu:%02lu:%02lu", timeSeconds / 3600, (timeSeconds % 3600) / 60, timeSeconds % 60);
+        return String(buf);
+    } else {
+        char buf[6]; // mm:ss\0
+        sprintf(buf, "%02lu:%02lu", (timeSeconds % 3600) / 60, timeSeconds % 60);
+        return String(buf);
+    }
 }
 
 void UI::displayReady(unsigned long standbyTime) {
