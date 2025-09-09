@@ -44,6 +44,8 @@ struct WebStruc {
   char     relatedKey[16];
 };
 
+enum class WiFiState { AP, STA_CONNECTING, STA_CONNECTED, STA_FAILED };
+
 class WifiConfigManager {
 public:
   WifiConfigManager(ConfigStruc* config,
@@ -58,6 +60,9 @@ public:
   // Lebenszyklus
   void begin(const String& apPrefix = "myESP-Setup");
   void handleLoop();
+  void startAP();
+  WiFiState getWiFiState();
+  String getAPName();
 
   // Getter
   String getSSID();
@@ -106,6 +111,8 @@ private:
   UI*             _ui;
 
   // intern
+  WiFiState _wifiState;
+  String    _apName;
   void _startAP();
   void _connectToWiFi();
   void _setupMDNS();

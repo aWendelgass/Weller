@@ -15,7 +15,7 @@ WifiConfigManager::WifiConfigManager(ConfigStruc* config,
                                      UI* ui)
 : _server(80), _mqttClient(_wifiClient), _config(config), _extraParams(extraParams),
   _webForm(webForm), _webFormCount(webFormCount), _anzExtraparams(anzExtraparams),
-  _firmwareVersion(firmwareVersion), _ui(ui) {}
+  _firmwareVersion(firmwareVersion), _ui(ui), _wifiState(WiFiState::STA_CONNECTING) {}
 
 WifiConfigManager::~WifiConfigManager() {}
 
@@ -25,13 +25,18 @@ void WifiConfigManager::begin(const String& apPrefix) {
 
   Serial.print("DEBUG: Status nach loadConfig(): _config->configured = ");
   Serial.println(_config->configured ? "true" : "false");
+  
+  bool hasSsid = (strlen(_config->ssid) > 0);
 
-  if (_config->configured) {
-    Serial.println("Gespeicherte Konfiguration gefunden. Versuche zu verbinden...");
+  if (_config->configured && hasSsid) {
+    Serial.println("Gespeicherte Konfiguration mit SSID gefunden. Versuche zu verbinden...");
     _connectToWiFi();
+  } else if (_config->configured && !hasSsid) {
+    Serial.println("Gespeicherte Konfiguration ohne SSID. Standalone-Modus wird vorbereitet.");
+    _wifiState = WiFiState::AP; // Treat as AP mode for state purposes
   } else {
-    Serial.println("Keine gespeicherte Konfiguration gefunden. Starte im AP-Modus.");
-    _startAP();
+    Serial.println("Keine gespeicherte Konfiguration gefunden. Standalone-Modus wird vorbereitet.");
+    _wifiState = WiFiState::AP; // Treat as AP mode for state purposes
   }
 }
 
@@ -144,14 +149,18 @@ void WifiConfigManager::saveConfig() {
   Serial.println("Konfiguration in Preferences gespeichert.");
 }
 
-void WifiConfigManager::_startAP() {
+WiFiState WifiConfigManager::getWiFiState() { return _wifiState; }
+String    WifiConfigManager::getAPName()    { return _apName; }
+
+void WifiConfigManager::startAP() {
+  _wifiState = WiFiState::AP;
   uint64_t chipId = ESP.getEfuseMac();
   char macSuffix[5];
   sprintf(macSuffix, "%04X", (uint16_t)(chipId >> 32));
-  String ap_ssid = _apNamePrefix + "-" + macSuffix;
+  _apName = _apNamePrefix + "-" + macSuffix;
 
   WiFi.mode(WIFI_AP);
-  WiFi.softAP(ap_ssid.c_str());
+  WiFi.softAP(_apName.c_str());
 
   _server.on("/", HTTP_GET,
     [this](AsyncWebServerRequest* request){
@@ -220,6 +229,7 @@ void WifiConfigManager::_startAP() {
 }
 
 void WifiConfigManager::_connectToWiFi() {
+  _wifiState = WiFiState::STA_CONNECTING;
   WiFi.mode(WIFI_STA);
   
   Serial.println("Scanning for WiFi networks...");
@@ -257,6 +267,7 @@ void WifiConfigManager::_connectToWiFi() {
   while (WiFi.status() != WL_CONNECTED && retries < 40) { delay(500); Serial.print("."); retries++; }
   
   if (WiFi.status() == WL_CONNECTED) {
+    _wifiState = WiFiState::STA_CONNECTED;
     Serial.println("\nVerbindung erfolgreich!");
     _setupMDNS();
     _reconnectMQTT();
@@ -324,9 +335,8 @@ void WifiConfigManager::_connectToWiFi() {
 
     _server.begin();
   } else {
-    Serial.println("\nVerbindung fehlgeschlagen. Starte AP-Modus.");
-    _config->configured = false;
-    _startAP();
+    _wifiState = WiFiState::STA_FAILED;
+    Serial.println("\nVerbindung fehlgeschlagen. AP-Modus kann bei Bedarf manuell gestartet werden.");
   }
 }
 
@@ -379,9 +389,9 @@ String WifiConfigManager::_getHtmlForm() {
     switch (element.lineType) {
       case TITLE:       html += "<h1>" + String(element.label) + "</h1>"; break;
       case CONFIGBLOCK:
-        html += "<div class='config-block'><h2>WLAN und MQTT Konfiguration</h2><h3>WLAN Einstellungen:</h3>";
-        html += "<div class='form-row'><label for='ssid'>SSID:</label><input type='text' id='ssid' name='ssid' value='" + String(_config->ssid) + "' class='required-input' required></div>";
-        html += "<div class='form-row'><label for='ssidpasswd'>Passwort:</label><input type='password' id='ssidpasswd' name='ssidpasswd' value='" + String(_config->ssidpasswd) + "' class='required-input' required></div>";
+        html += "<div class='config-block'><h2>WLAN und MQTT Konfiguration</h2><h3>WLAN Einstellungen (optional - leer lassen für Standalone-Betrieb):</h3>";
+        html += "<div class='form-row'><label for='ssid'>SSID:</label><input type='text' id='ssid' name='ssid' value='" + String(_config->ssid) + "'></div>";
+        html += "<div class='form-row'><label for='ssidpasswd'>Passwort:</label><input type='password' id='ssidpasswd' name='ssidpasswd' value='" + String(_config->ssidpasswd) + "'></div>";
         html += "<div class='form-row'><label></label><div class='checkbox-container'><input type='checkbox' id='show-ssidpasswd'><label for='show-ssidpasswd'>Passwort anzeigen</label></div></div>";
         html += "<div class='form-row'><label for='mdns'>mDNS Hostname:</label><input type='text' id='mdns' name='mdns' value='" + String(_config->mdns) + "' class='required-input' required></div>";
         html += "<h3>MQTT Einstellungen (optional):</h3>";
@@ -487,7 +497,8 @@ bool WifiConfigManager::_validateForm(AsyncWebServerRequest* request) {
 
   String errorList;
   String ssid = request->arg("ssid");
-  if (ssid.length() == 0) errorList += "<li>SSID ist ein Pflichtfeld.</li>";
+  // SSID is now optional, so the check is removed.
+  // if (ssid.length() == 0) errorList += "<li>SSID ist ein Pflichtfeld.</li>";
 
   for (int i = 0; i < _anzExtraparams; i++) {
     ExtraStruc& param = _extraParams[i];

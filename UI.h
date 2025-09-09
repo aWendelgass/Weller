@@ -7,6 +7,8 @@
 #include <U8g2_for_Adafruit_GFX.h>
 #include <Bounce2.h>
 
+enum class WiFiState; // Forward declaration
+
 // Enum for button press types
 enum class ButtonPressType {
   NONE,
@@ -21,7 +23,7 @@ class UI {
 public:
   UI(int buttonPin, int ledPin);
   void begin(const char* version);
-  void handleUpdates(bool isWifiConnected);
+  void handleUpdates(WiFiState wifiState);
   ButtonPressType getButtonPress();
   bool isHeld();
   unsigned long getHoldDuration();
@@ -39,6 +41,7 @@ public:
   void drawInfoPage(long tareOffset, float calFactor, String ip, bool isMqttConnected);
   void drawResetPage();
   void displayConfirmation(const char* message);
+  void displayAPInfo(String apName);
   void showMessage(const char* line1, const char* line2, int delayMs = 0);
   void showMessage(const char* line1, const char* line2, const char* line3, int delayMs=0);
   void clear();

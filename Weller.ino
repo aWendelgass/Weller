@@ -1,4 +1,4 @@
-constexpr const char* VERSION = "Version 0.60d";
+constexpr const char* VERSION = "Version 0.70alpa";
 
 // Changelog:
 //    V0.30:    Neues Konfigurationselement: Lötkolbengewicht eingeführt 46g Default
@@ -19,6 +19,7 @@ constexpr const char* VERSION = "Version 0.60d";
 //    V0.60b    StantionREstart causewd Watchdog. Das wurde geändert
 //    V0.60c    Integer Underflow Crash fixed
 //    V0.60d    Change Initial State to INACTIVE,INACTIVE->ACTIVE Transition ohne zwangs StationNeustart
+//    V0.70alpha  WiFi connection optional and add AP mode fallback, 
 
 #include <Arduino.h>
 #include "Waage.h"
@@ -90,7 +91,8 @@ enum class SystemState {
     INIT, READY, ACTIVE, INACTIVE, STANDBY,
     SETUP_MAIN, SETUP_STANDBY_TIME, MENU_TARE, MENU_CALIBRATE, MENU_INFO, 
     MENU_WIEGEN, MENU_RESET, MENU_RESET_CONFIRM,
-    CALIBRATION_CHECK_WEIGHT, CALIBRATION_STEP_1_START, CALIBRATION_STEP_2_EMPTY, CALIBRATION_DONE
+    CALIBRATION_CHECK_WEIGHT, CALIBRATION_STEP_1_START, CALIBRATION_STEP_2_EMPTY, CALIBRATION_DONE,
+    SHOW_AP_INFO
 };
 SystemState currentState = SystemState::INIT;
 SystemState lastPublishedState = SystemState::INIT;
@@ -100,6 +102,7 @@ const long secureTime = 0;
 unsigned long standbyTimer_start = 0;
 unsigned long operationTimer_start = 0;
 unsigned long standby_entered_timestamp = 0;
+unsigned long show_ap_info_start_time = 0;
 int setup_menu_index = 0;
 int setup_standby_time_minutes = 5;
 int original_standby_time_minutes = 0;
@@ -148,6 +151,7 @@ static String getBaseTopic() {
 const char* systemStateToString(SystemState state) {
     switch (state) {
         case SystemState::INIT: return "INIT";
+        case SystemState::SHOW_AP_INFO: return "SHOW_AP_INFO";
         case SystemState::READY: return "READY";
         case SystemState::ACTIVE: return "ACTIVE";
         case SystemState::INACTIVE: return "INACTIVE";
@@ -192,20 +196,29 @@ void setup() {
     Serial.begin(115200);
     delay(300);
     Serial.println(VERSION);
-    configManager.begin("SmartScale");
+    
     ui.begin(VERSION);
     pinMode(RELAY_PIN, OUTPUT);
     digitalWrite(RELAY_PIN, LOW);
+    
+    configManager.begin("Weller");
+
+    WiFiState wifiState = configManager.getWiFiState();
+    if (wifiState == WiFiState::AP || wifiState == WiFiState::STA_FAILED) {
+        configManager.startAP();
+        currentState = SystemState::SHOW_AP_INFO;
+    }
+
     KalibrierungsDaten kd{};
     kd.kalibrierungsfaktor = configManager.getExtraParamFloat(key_Kalibrierungsfaktor);
     kd.tareOffset          = configManager.getExtraParamInt(key_offset);
     kd.istKalibriert       = configManager.getExtraParamBool(key_kalibriert);
     
-    //AW01
     StationStandbyTime = configManager.getExtraParamInt(key_standbyzeit) * 60;
     
     meineWaage.begin(kd);
     meineWaage.tare(); 
+    startStandbyTimer(); // Ensure this is always called
 }
 
 void loop() {
@@ -214,7 +227,7 @@ void loop() {
     mqttPublishLoop();
     
     ui.setStandby(currentState == SystemState::STANDBY);
-    ui.handleUpdates(configManager.isWifiConnected());
+    ui.handleUpdates(configManager.getWiFiState());
 
     ButtonPressType press = ui.getButtonPress();
     float currentWeight = meineWaage.getGewicht();
@@ -225,7 +238,7 @@ void loop() {
 
     long weightThreshold = ironWeight > 0 ? (ironWeight / 2) : 20;
 
-    bool isOperationalState = (currentState == SystemState::READY || currentState == SystemState::ACTIVE || currentState == SystemState::INACTIVE || currentState == SystemState::STANDBY || currentState == SystemState::INIT);
+    bool isOperationalState = (currentState == SystemState::READY || currentState == SystemState::ACTIVE || currentState == SystemState::INACTIVE || currentState == SystemState::STANDBY || currentState == SystemState::INIT || currentState == SystemState::SHOW_AP_INFO);
     
     if (ui.isHeld()) {
         if (in_setup_hold_transition) return;
@@ -276,7 +289,7 @@ void handleOperationalMode(ButtonPressType press, float currentWeight, long weig
 
     switch (currentState) {
         case SystemState::INIT:
-            startStandbyTimer();
+            // Timer is now started universally in setup()
             currentState = SystemState::INACTIVE;
             break;
         case SystemState::READY:
@@ -313,6 +326,15 @@ void handleOperationalMode(ButtonPressType press, float currentWeight, long weig
                 startStandbyTimer();
                 startOperationTimer();
                 currentState = SystemState::ACTIVE;
+            }
+            break;
+        case SystemState::SHOW_AP_INFO:
+            if (show_ap_info_start_time == 0) {
+                show_ap_info_start_time = now;
+            }
+            ui.displayAPInfo(configManager.getAPName());
+            if (now - show_ap_info_start_time > 5000) {
+                currentState = SystemState::INACTIVE;
             }
             break;
         default: break;

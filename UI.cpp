@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "UI.h"
+#include "WifiConfigManager.h" // For WiFiState enum
 #include <Wire.h>
 #include <WiFi.h> // For WiFi.localIP()
 
@@ -44,7 +45,7 @@ void UI::setStandby(bool standby) {
     _in_standby = standby;
 }
 
-void UI::handleUpdates(bool isWifiConnected) {
+void UI::handleUpdates(WiFiState wifiState) {
     _debouncer.update();
 
     if (_in_standby) {
@@ -56,18 +57,23 @@ void UI::handleUpdates(bool isWifiConnected) {
     static unsigned long previousMillis = 0;
     const long interval = 500;
 
-    if (isWifiConnected) {
-        if (_led_state == false) {
-            ledcWrite(_ledPin, 255); // LED ON
-            _led_state = true;
-        }
-    } else {
-        unsigned long currentMillis = millis();
-        if (currentMillis - previousMillis >= interval) {
-            previousMillis = currentMillis;
-            _led_state = !_led_state;
-            ledcWrite(_ledPin, _led_state ? 255 : 0); // Blink
-        }
+    switch (wifiState) {
+        case WiFiState::STA_CONNECTED:
+        case WiFiState::AP:
+            if (_led_state == false) {
+                ledcWrite(_ledPin, 255); // Solid LED ON for stable states
+                _led_state = true;
+            }
+            break;
+        case WiFiState::STA_CONNECTING:
+        case WiFiState::STA_FAILED:
+            unsigned long currentMillis = millis();
+            if (currentMillis - previousMillis >= interval) {
+                previousMillis = currentMillis;
+                _led_state = !_led_state;
+                ledcWrite(_ledPin, _led_state ? 255 : 0); // Blinking for transient/error states
+            }
+            break;
     }
 }
 
@@ -122,7 +128,7 @@ bool UI::isHeld() {
 }
 
 unsigned long UI::getHoldDuration() {
-    return _debouncer.duration();
+    return _debouncer.currentDuration();
 }
 
 void UI::drawCheckmark() {
@@ -315,6 +321,24 @@ void UI::displayWeighing(float weight) {
     _u8g2.setCursor(0, 48);
     _u8g2.print(buf);
     _u8g2.print(" g");
+
+    _display.display();
+}
+
+void UI::displayAPInfo(String apName) {
+    if (!_oledAvailable) return;
+    _display.clearDisplay();
+    _u8g2.setFont(u8g2_font_helvB12_tf);
+    _u8g2.setCursor(0, 14);
+    _u8g2.print(F("AP-Modus Aktiv"));
+    
+    _u8g2.setFont(u8g2_font_7x14_tf);
+    _u8g2.setCursor(0, 40);
+    _u8g2.print("SSID:");
+
+    _u8g2.setFont(u8g2_font_helvR14_tf);
+    _u8g2.setCursor(0, 58);
+    _u8g2.print(apName);
 
     _display.display();
 }
