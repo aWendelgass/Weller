@@ -1,6 +1,6 @@
 {
-  "name": "SaltMonitor",
-  "version": "2.3.2",
+  "name": "Weller Samrt Monitor",
+  "version": "V0-.80beta3",
   "builds": [
     {
       "chipFamily": "ESP32",
