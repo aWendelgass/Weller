@@ -2,7 +2,6 @@
 # Arduino build files
 *.hex
 *.elf
-*.bin
 *.eep
 *.map
 *.d
