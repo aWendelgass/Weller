@@ -1,4 +1,4 @@
-constexpr const char* VERSION = "Version 0.80beta1";
+constexpr const char* VERSION = "Version 0.80beta3";
 
 // Changelog:
 //    V0.30:    Neues Konfigurationselement: Lötkolbengewicht eingeführt 46g Default
@@ -25,7 +25,8 @@ constexpr const char* VERSION = "Version 0.80beta1";
 //    V0.70alpha3  Kein Display mehr aus WifiConfogManager, UI Abhängigkeiten dort entfernt
 //    V0.70alpha4  Redircect to Config Page in WCM
 //    V0.70alpha5  Redircect to Config Page in WCM by meta refresh
-//    V0.80beta1   Komplettabschaltung der Lötstation eingebaut
+//    V0.80beta1/2   Komplettabschaltung der Lötstation eingebaut
+//    V0.80beta13    OFF Mode mit Bildschirmschoner und atmender LED
 
 
 #include <Arduino.h>
@@ -98,8 +99,8 @@ WifiConfigManager configManager(&config, extraParams, webForm, ANZ_WEBFORM_ITEMS
 Waage meineWaage(HX711_DOUT, HX711_SCK);
 
 enum class SystemState {
-    INIT, READY, ACTIVE, INACTIVE, STANDBY,
-    SETUP_MAIN, SETUP_STANDBY_TIME, MENU_TARE, MENU_CALIBRATE, MENU_INFO, 
+    INIT, READY, ACTIVE, INACTIVE, STANDBY, OFF,
+    SETUP_MAIN, SETUP_STANDBY_TIME, SETUP_OFF_TIME, MENU_TARE, MENU_CALIBRATE, MENU_INFO, 
     MENU_WIEGEN, MENU_RESET, MENU_RESET_CONFIRM,
     CALIBRATION_CHECK_WEIGHT, CALIBRATION_STEP_1_START, CALIBRATION_STEP_2_EMPTY, CALIBRATION_DONE,
     SHOW_AP_INFO
@@ -108,14 +109,18 @@ SystemState currentState = SystemState::INIT;
 SystemState lastPublishedState = SystemState::INIT;
 
 long StationStandbyTime = 60;
+long StationSwitchOffTime = 3600;
 const long secureTime = 0;
 unsigned long standbyTimer_start = 0;
+unsigned long switchOffTimer_start = 0;
 unsigned long operationTimer_start = 0;
 unsigned long standby_entered_timestamp = 0;
 unsigned long show_ap_info_start_time = 0;
 int setup_menu_index = 0;
 int setup_standby_time_minutes = 5;
 int original_standby_time_minutes = 0;
+int setup_off_time_minutes = 60;
+int original_off_time_minutes = 0;
 bool in_setup_hold_transition = false; // Flag to prevent re-entry
 
 // --- Forward Declarations ---
@@ -135,6 +140,8 @@ void restartStation() {
 }
 void startStandbyTimer() { standbyTimer_start = millis(); }
 void stopStandbyTimer() { standbyTimer_start = 0; }
+void startSwitchOffTimer() { switchOffTimer_start = millis(); }
+void stopSwitchOffTimer() { switchOffTimer_start = 0; }
 void startOperationTimer() { operationTimer_start = millis(); }
 void stopOperationTimer() { operationTimer_start = 0; }
 static void setExtraFloat(const char* key, float v){ for(size_t i=0; i<ANZ_EXTRA_PARAMS; i++){ if(strcmp(extraParams[i].keyName,key)==0){ extraParams[i].FLOATvalue=v; return; } } }
@@ -166,8 +173,10 @@ const char* systemStateToString(SystemState state) {
         case SystemState::ACTIVE: return "ACTIVE";
         case SystemState::INACTIVE: return "INACTIVE";
         case SystemState::STANDBY: return "STANDBY";
+        case SystemState::OFF: return "OFF";
         case SystemState::SETUP_MAIN: return "SETUP_MAIN";
         case SystemState::SETUP_STANDBY_TIME: return "SETUP_STANDBY_TIME";
+        case SystemState::SETUP_OFF_TIME: return "SETUP_OFF_TIME";
         case SystemState::MENU_TARE: return "MENU_TARE";
         case SystemState::MENU_CALIBRATE: return "MENU_CALIBRATE";
         case SystemState::MENU_INFO: return "MENU_INFO";
@@ -225,6 +234,7 @@ void setup() {
     kd.istKalibriert       = configManager.getExtraParamBool(key_kalibriert);
     
     StationStandbyTime = configManager.getExtraParamInt(key_standbyzeit) * 60;
+    StationSwitchOffTime = configManager.getExtraParamInt(key_switchofftime) * 60;
     
     meineWaage.begin(kd);
     meineWaage.tare(); 
@@ -237,6 +247,7 @@ void loop() {
     mqttPublishLoop();
     
     ui.setStandby(currentState == SystemState::STANDBY);
+    ui.setOff(currentState == SystemState::OFF);
     ui.handleUpdates(configManager.getWiFiState());
 
     ButtonPressType press = ui.getButtonPress();
@@ -248,7 +259,7 @@ void loop() {
 
     long weightThreshold = ironWeight > 0 ? (ironWeight / 2) : 20;
 
-    bool isOperationalState = (currentState == SystemState::READY || currentState == SystemState::ACTIVE || currentState == SystemState::INACTIVE || currentState == SystemState::STANDBY || currentState == SystemState::INIT || currentState == SystemState::SHOW_AP_INFO);
+    bool isOperationalState = (currentState == SystemState::READY || currentState == SystemState::ACTIVE || currentState == SystemState::INACTIVE || currentState == SystemState::STANDBY || currentState == SystemState::INIT || currentState == SystemState::SHOW_AP_INFO || currentState == SystemState::OFF);
     
     if (ui.isHeld()) {
         if (in_setup_hold_transition) return;
@@ -256,9 +267,12 @@ void loop() {
         if (isOperationalState && holdDuration > 5000) {
             stopOperationTimer();
             stopStandbyTimer();
+            stopSwitchOffTimer();
             setup_menu_index = 0;
             original_standby_time_minutes = StationStandbyTime / 60;
             setup_standby_time_minutes = original_standby_time_minutes;
+            original_off_time_minutes = StationSwitchOffTime / 60;
+            setup_off_time_minutes = original_off_time_minutes;
             currentState = SystemState::SETUP_MAIN;
             in_setup_hold_transition = true;
         }
@@ -276,24 +290,44 @@ void loop() {
 void handleOperationalMode(ButtonPressType press, float currentWeight, long weightThreshold) {
     unsigned long now = millis();
     
-    unsigned long timeLeft_ms = 0;
+    unsigned long standby_timeLeft_ms = 0;
     if (standbyTimer_start > 0) {
         unsigned long elapsed_ms = now - standbyTimer_start;
         unsigned long total_ms = (StationStandbyTime - secureTime) * 1000;
         if (elapsed_ms < total_ms) {
-            timeLeft_ms = total_ms - elapsed_ms;
+            standby_timeLeft_ms = total_ms - elapsed_ms;
         }
     }
-    unsigned long standbyTimeLeft = timeLeft_ms / 1000;
+    unsigned long standbyTimeLeft = standby_timeLeft_ms / 1000;
+
+    unsigned long switchoff_timeLeft_ms = 0;
+    if (switchOffTimer_start > 0) {
+        unsigned long elapsed_ms = now - switchOffTimer_start;
+        unsigned long total_ms = (StationSwitchOffTime - secureTime) * 1000;
+        if (elapsed_ms < total_ms) {
+            switchoff_timeLeft_ms = total_ms - elapsed_ms;
+        }
+    }
+    unsigned long switchOffTimeLeft = switchoff_timeLeft_ms / 1000;
 
     if (standbyTimer_start > 0 && (now - standbyTimer_start > (StationStandbyTime - secureTime) * 1000)) {
         if (currentState == SystemState::READY || currentState == SystemState::INACTIVE) {
             stopStandbyTimer();
+            startSwitchOffTimer();
             standby_entered_timestamp = now;
             currentState = SystemState::STANDBY;
         } else if (currentState == SystemState::ACTIVE) {
             restartStation();
             startStandbyTimer();
+        }
+    }
+
+    if (switchOffTimer_start > 0 && (now - switchOffTimer_start > (StationSwitchOffTime - secureTime) * 1000)) {
+        if (currentState == SystemState::STANDBY) {
+            stopSwitchOffTimer();
+            digitalWrite(RELAY_PIN, HIGH); // Turn off station
+            ui.dimDisplay(true);
+            currentState = SystemState::OFF;
         }
     }
 
@@ -326,17 +360,28 @@ void handleOperationalMode(ButtonPressType press, float currentWeight, long weig
             }
             break;
         case SystemState::STANDBY:
-            ui.displayStandby((standby_entered_timestamp > 0) ? (now - standby_entered_timestamp) / 1000 : 0);
+            ui.displayStandby((standby_entered_timestamp > 0) ? (now - standby_entered_timestamp) / 1000 : 0, switchOffTimeLeft);
             if (press == ButtonPressType::SHORT) {
+                stopSwitchOffTimer();
                 restartStation(); // Pre-heat the station
                 startStandbyTimer();
                 currentState = SystemState::READY;
             }
             if (currentWeight < -weightThreshold) {
+                stopSwitchOffTimer();
                 restartStation();
                 startStandbyTimer();
                 startOperationTimer();
                 currentState = SystemState::ACTIVE;
+            }
+            break;
+        case SystemState::OFF:
+            ui.displayOff();
+            if (press == ButtonPressType::SHORT) {
+                ui.dimDisplay(false);
+                restartStation();
+                startStandbyTimer();
+                currentState = SystemState::INACTIVE;
             }
             break;
         case SystemState::SHOW_AP_INFO:
@@ -358,15 +403,21 @@ void handleSetupMode(ButtonPressType press, float currentWeight) {
             case SystemState::SETUP_MAIN:
                 switch (setup_menu_index) {
                     case 0: currentState = SystemState::SETUP_STANDBY_TIME; break;
-                    case 1: currentState = SystemState::MENU_TARE; break;
-                    case 2: currentState = SystemState::MENU_CALIBRATE; break;
-                    case 3: currentState = SystemState::MENU_INFO; break;
-                    case 4: currentState = SystemState::MENU_WIEGEN; break;
-                    case 5: currentState = SystemState::MENU_RESET; break;
-                    case 6: 
+                    case 1: currentState = SystemState::SETUP_OFF_TIME; break;
+                    case 2: currentState = SystemState::MENU_TARE; break;
+                    case 3: currentState = SystemState::MENU_CALIBRATE; break;
+                    case 4: currentState = SystemState::MENU_INFO; break;
+                    case 5: currentState = SystemState::MENU_WIEGEN; break;
+                    case 6: currentState = SystemState::MENU_RESET; break;
+                    case 7: 
                         if (setup_standby_time_minutes != original_standby_time_minutes) {
                             StationStandbyTime = setup_standby_time_minutes * 60;
                             setExtraLong(key_standbyzeit, setup_standby_time_minutes);
+                            configManager.saveConfig();
+                        }
+                        if (setup_off_time_minutes != original_off_time_minutes) {
+                            StationSwitchOffTime = setup_off_time_minutes * 60;
+                            setExtraLong(key_switchofftime, setup_off_time_minutes);
                             configManager.saveConfig();
                         }
                         restartStation();
@@ -376,6 +427,9 @@ void handleSetupMode(ButtonPressType press, float currentWeight) {
                 }
                 break;
             case SystemState::SETUP_STANDBY_TIME:
+                currentState = SystemState::SETUP_MAIN;
+                break;
+            case SystemState::SETUP_OFF_TIME:
                 currentState = SystemState::SETUP_MAIN;
                 break;
             case SystemState::MENU_TARE:
@@ -400,7 +454,7 @@ void handleSetupMode(ButtonPressType press, float currentWeight) {
         case SystemState::SETUP_MAIN:
             ui.displaySetupMain(setup_menu_index);
             if (press == ButtonPressType::SHORT) {
-                setup_menu_index = (setup_menu_index + 1) % 7;
+                setup_menu_index = (setup_menu_index + 1) % 8;
             }
             break;
         case SystemState::SETUP_STANDBY_TIME:
@@ -408,6 +462,13 @@ void handleSetupMode(ButtonPressType press, float currentWeight) {
             if (press == ButtonPressType::SHORT) {
                 setup_standby_time_minutes++;
                 if (setup_standby_time_minutes > 15) setup_standby_time_minutes = 1;
+            }
+            break;
+        case SystemState::SETUP_OFF_TIME:
+            ui.displaySetupOffTime(setup_off_time_minutes);
+            if (press == ButtonPressType::SHORT) {
+                setup_off_time_minutes += 5;
+                if (setup_off_time_minutes > 180) setup_off_time_minutes = 5;
             }
             break;
         case SystemState::MENU_WIEGEN:

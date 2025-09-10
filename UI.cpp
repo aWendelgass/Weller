@@ -45,11 +45,25 @@ void UI::setStandby(bool standby) {
     _in_standby = standby;
 }
 
+void UI::setOff(bool off) {
+    if (_in_off && !off) { // Transitioning out of off
+        _led_state = false; // Force LED to be set to HIGH on next update
+    }
+    _in_off = off;
+}
+
 void UI::handleUpdates(WiFiState wifiState) {
     _debouncer.update();
 
     if (_in_standby) {
         ledcWrite(_ledPin, 5); // 2% brightness
+        return;
+    }
+
+    if (_in_off) {
+        // Breathing LED effect
+        float brightness = (sin(millis() * 2.0 * PI / 4000.0) + 1.0) / 2.0; // 4-second period
+        ledcWrite(_ledPin, (int)(brightness * 127.0)); // Ramp up to 50%
         return;
     }
 
@@ -218,6 +232,32 @@ void UI::displayActive(unsigned long operationTime, unsigned long standbyTime) {
     _display.display();
 }
 
+void UI::displayOff() {
+    if (!_oledAvailable) return;
+
+    static unsigned long lastMove = 0;
+    static bool positionToggle = false;
+    unsigned long now = millis();
+
+    if (now - lastMove > 5000) { // Move every 5 seconds
+        lastMove = now;
+        positionToggle = !positionToggle;
+    }
+
+    int yPos1 = positionToggle ? 24 : 30;
+    int yPos2 = positionToggle ? 52 : 58;
+
+    _display.clearDisplay();
+    _u8g2.setFont(u8g2_font_helvB18_tf);
+    _u8g2.setCursor(0, yPos1);
+    //_u8g2.print(F("Ausgeschaltet"));
+    _u8g2.print(F("Weller AUS"));
+    _u8g2.setFont(u8g2_font_6x13_tf);
+    _u8g2.setCursor(0, yPos2);
+    _u8g2.print("Kurzer Klick zum Start");
+    _display.display();
+}
+
 void UI::displayInactive(unsigned long standbyTime) {
     if (!_oledAvailable) return;
     _display.clearDisplay();
@@ -230,21 +270,23 @@ void UI::displayInactive(unsigned long standbyTime) {
     _display.display();
 }
 
-void UI::displayStandby(unsigned long standbyTime) {
+void UI::displayStandby(unsigned long standbyTime, unsigned long switchOffTimeLeft) {
     if (!_oledAvailable) return;
     _display.clearDisplay();
     _u8g2.setFont(u8g2_font_helvB18_tf);
     _u8g2.setCursor(0, 24);
     _u8g2.print(F("Standby"));
     _u8g2.setFont(u8g2_font_6x13_tf);
-    _u8g2.setCursor(0, 52);
+    _u8g2.setCursor(0, 42);
     _u8g2.print("seit: " + formatTime(standbyTime));
+    _u8g2.setCursor(0, 56);
+    _u8g2.print("Aus in: " + formatTime(switchOffTimeLeft));
     _display.display();
 }
 
 void UI::displaySetupMain(int menuIndex) {
     if (!_oledAvailable) return;
-    const char* items[] = {"Standby Time", "Tara", "Kalibrierung", "Info", "Waage", "Werkseinstellung", "Exit"};
+    const char* items[] = {"Standby Time", "Off Time", "Tara", "Kalibrierung", "Info", "Waage", "Werkseinstellung", "Exit"};
     const int numItems = sizeof(items) / sizeof(items[0]);
     const int displayItems = 4;
 
@@ -308,6 +350,22 @@ void UI::displaySetupStandbyTime(int newStandbyTime) {
     _display.display();
 }
 
+void UI::displaySetupOffTime(int newOffTime) {
+    if (!_oledAvailable) return;
+    _display.clearDisplay();
+    _u8g2.setFont(u8g2_font_helvB18_tf);
+    _u8g2.setCursor(0, 24);
+    _u8g2.print(F("Weller Off Time"));
+
+    char buf[20];
+    sprintf(buf, "%d Minuten", newOffTime);
+    _u8g2.setFont(u8g2_font_helvR14_tf);
+    _u8g2.setCursor(0, 52);
+    _u8g2.print(buf);
+    
+    _display.display();
+}
+
 void UI::displayWeighing(float weight) {
     if (!_oledAvailable) return;
     _display.clearDisplay();
@@ -352,6 +410,15 @@ void UI::drawInfoPage(long tareOffset, float calFactor, String ip, bool isMqttCo
     _u8g2.setCursor(0,44); _u8g2.print(F("IP: "));     _u8g2.print(ip);
     _u8g2.setCursor(0,56); _u8g2.print(F("MQTT: "));   _u8g2.print(isMqttConnected ? F("verbunden") : F("NICHT"));
     _display.display();
+}
+
+void UI::dimDisplay(bool dim) {
+    if (!_oledAvailable) return;
+    // The Adafruit library does not have a public setContrast method.
+    // We must send the command directly.
+    // Command 0x81 is SETCONTRAST.
+    _display.ssd1306_command(SSD1306_SETCONTRAST);
+    _display.ssd1306_command(dim ? 0 : 0xCF); // 0 = dim, 0xCF = default bright
 }
 
 void UI::drawTarePage() {

@@ -32,9 +32,11 @@ public:
   void displayReady(unsigned long standbyTime);
   void displayActive(unsigned long operationTime, unsigned long standbyTime);
   void displayInactive(unsigned long standbyTime);
-  void displayStandby(unsigned long standbyTime);
+  void displayStandby(unsigned long standbyTime, unsigned long switchOffTimeLeft);
+  void displayOff();
   void displaySetupMain(int menuIndex);
   void displaySetupStandbyTime(int newStandbyTime);
+  void displaySetupOffTime(int newOffTime);
   void displayWeighing(float weight);
   void drawTarePage();
   void drawCalibratePage();
@@ -42,6 +44,7 @@ public:
   void drawResetPage();
   void displayConfirmation(const char* message);
   void displayAPInfo(String apName);
+  void dimDisplay(bool dim);
   void showMessage(const char* line1, const char* line2, int delayMs = 0);
   void showMessage(const char* line1, const char* line2, const char* line3, int delayMs=0);
   void clear();
@@ -52,6 +55,7 @@ public:
   void blinkLed(int count, int delayMs);
   void setLed(bool on);
   void setStandby(bool standby);
+  void setOff(bool off);
 
 private:
   void initOLED(const char* version);
@@ -61,6 +65,7 @@ private:
   int _buttonPin;
   int _ledPin;
   bool _in_standby = false;
+  bool _in_off = false;
   bool _led_state = false;
 
   Adafruit_SSD1306 _display;
